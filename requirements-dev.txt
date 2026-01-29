@@ -1,0 +1,26 @@
+# Abhedya Air Defense System - Development Dependencies
+# Install with: pip install -r requirements-dev.txt
+
+# Include production dependencies
+-r requirements.txt
+
+# Testing
+pytest>=7.4.0                   # Testing framework
+pytest-cov>=4.1.0               # Coverage reporting
+pytest-mock>=3.11.0             # Mocking utilities
+pytest-asyncio>=0.21.0          # Async testing support
+
+# Code Quality
+black>=23.7.0                   # Code formatter
+ruff>=0.0.280                   # Fast linter and formatter
+mypy>=1.5.0                     # Static type checking
+pylint>=2.17.0                  # Code analysis
+
+# Documentation
+sphinx>=7.1.0                   # Documentation generator
+sphinx-rtd-theme>=1.3.0         # Read the Docs theme
+
+# Development Tools
+ipython>=8.14.0                  # Enhanced Python shell
+ipdb>=0.13.0                     # Enhanced debugger
+

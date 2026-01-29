@@ -1,0 +1,150 @@
+Abhedya Air Defense System - Complete Folder Tree
+==================================================
+
+Abhedya/
+│
+├── abhedya/                          # Main application package
+│   ├── __init__.py
+│   │
+│   ├── domain/                       # Domain models and entities
+│   │   ├── __init__.py
+│   │   ├── entities/                 # Core domain entities
+│   │   │   └── __init__.py
+│   │   ├── value_objects/            # Value objects and types
+│   │   │   └── __init__.py
+│   │   └── enums/                    # Domain enumerations
+│   │       └── __init__.py
+│   │
+│   ├── simulation/                   # Sensor simulation layer
+│   │   ├── __init__.py
+│   │   ├── sensors/                 # Sensor implementations
+│   │   │   └── __init__.py
+│   │   ├── fusion/                   # Sensor fusion algorithms
+│   │   │   └── __init__.py
+│   │   └── models/                   # Simulation-specific models
+│   │       └── __init__.py
+│   │
+│   ├── analysis/                     # Threat analysis and assessment
+│   │   ├── __init__.py
+│   │   ├── classification/          # Entity classification
+│   │   │   └── __init__.py
+│   │   ├── threat_assessment/       # Threat level assessment
+│   │   │   └── __init__.py
+│   │   ├── behavior_analysis/       # Behavior pattern analysis
+│   │   │   └── __init__.py
+│   │   └── explainability/          # Assessment explainability
+│   │       └── __init__.py
+│   │
+│   ├── advisory/                     # Advisory decision-support (NO EXECUTION)
+│   │   ├── __init__.py
+│   │   ├── recommendation/           # Recommendation generation
+│   │   │   └── __init__.py
+│   │   ├── reasoning/               # Reasoning and explanation
+│   │   │   └── __init__.py
+│   │   └── validation/              # Recommendation validation
+│   │       └── __init__.py
+│   │
+│   ├── interface/                    # Human-in-the-loop interface layer
+│   │   ├── __init__.py
+│   │   ├── presentation/            # Recommendation presentation
+│   │   │   └── __init__.py
+│   │   ├── approval/                # Approval workflow management
+│   │   │   └── __init__.py
+│   │   └── operator/                # Operator interface
+│   │       └── __init__.py
+│   │
+│   ├── infrastructure/              # Infrastructure and cross-cutting concerns
+│   │   ├── __init__.py
+│   │   ├── audit/                   # Audit logging and trail
+│   │   │   └── __init__.py
+│   │   ├── config/                  # Configuration management
+│   │   │   └── __init__.py
+│   │   ├── logging/                 # Application logging
+│   │   │   └── __init__.py
+│   │   └── validation/              # Safety and validation
+│   │       └── __init__.py
+│   │
+│   └── core/                         # Core system orchestration
+│       ├── __init__.py
+│       ├── system.py                # Main system orchestrator
+│       ├── interfaces.py            # Component interfaces
+│       └── constants.py             # System constants
+│
+├── tests/                             # Test suite
+│   ├── __init__.py
+│   ├── unit/                         # Unit tests
+│   │   ├── __init__.py
+│   │   ├── domain/
+│   │   ├── simulation/
+│   │   ├── analysis/
+│   │   ├── advisory/
+│   │   └── interface/
+│   ├── integration/                  # Integration tests
+│   │   └── __init__.py
+│   ├── safety/                       # Safety constraint tests
+│   │   └── __init__.py
+│   └── fixtures/                     # Test fixtures and mocks
+│       └── __init__.py
+│
+├── docs/                              # Documentation
+│   ├── __init__.py
+│   ├── architecture/                 # Architecture documentation
+│   ├── api/                          # API documentation
+│   ├── ethics/                       # Ethics and compliance
+│   └── user_guide/                   # User guides
+│
+├── config/                            # Configuration files
+│   └── .gitkeep
+│
+├── scripts/                           # Utility scripts
+│   └── __init__.py
+│
+├── examples/                          # Example scenarios
+│   ├── __init__.py
+│   ├── basic/                        # Basic examples
+│   ├── scenarios/                    # Scenario demonstrations
+│   └── tutorials/                    # Tutorial examples
+│
+├── requirements.txt                   # Production dependencies
+├── requirements-dev.txt               # Development dependencies
+├── setup.py                          # Package setup
+├── pyproject.toml                    # Modern Python project config
+├── README.md                         # Project overview
+├── STRUCTURE.md                      # Detailed structure documentation
+├── LICENSE                           # License file
+└── .gitignore                        # Git ignore rules
+
+================================================================================
+KEY SEPARATIONS:
+================================================================================
+
+1. SIMULATION LAYER (abhedya/simulation/)
+   - Strictly simulation - no real hardware interfaces
+   - Isolated sensor simulation and fusion
+
+2. ANALYSIS LAYER (abhedya/analysis/)
+   - Analysis only - no decision execution
+   - Threat assessment and classification
+
+3. ADVISORY LAYER (abhedya/advisory/)
+   - ADVISORY ONLY - NO EXECUTION AUTHORITY
+   - Recommendation generation (non-binding)
+
+4. INTERFACE LAYER (abhedya/interface/)
+   - Mandatory human interaction
+   - Cannot be bypassed
+
+5. INFRASTRUCTURE LAYER (abhedya/infrastructure/)
+   - Cross-cutting concerns
+   - Supports all layers with audit, config, logging
+
+6. DOMAIN LAYER (abhedya/domain/)
+   - Pure domain logic
+   - No infrastructure dependencies
+
+7. CORE ORCHESTRATION (abhedya/core/)
+   - System coordination only
+   - No execution authority
+
+================================================================================
+
