@@ -1195,81 +1195,74 @@ with tab6:
                     if "sensor_show_passive" not in st.session_state:
                         st.session_state.sensor_show_passive = True
                     if "sensor_global_opacity" not in st.session_state:
-                        st.session_state.sensor_global_opacity = None  # None = use default
+                        st.session_state.sensor_global_opacity = None
                     
-                    # Sensor type toggles (default ON, smooth toggling)
-                    col1, col2 = st.columns(2)
-                    with col1:
+                    with st.container():
+                        st.subheader("Radar Sensors")
                         show_surveillance = st.checkbox(
-                            "📡 Surveillance Radar",
+                            "Surveillance Radar",
                             value=st.session_state.sensor_show_surveillance,
                             key="sensor_toggle_surveillance",
                             help="Toggle Long-Range Surveillance Radar visualization"
                         )
-                        # Mirror into canonical session key
                         st.session_state.sensor_show_surveillance = show_surveillance
-                        
                         show_fire_control = st.checkbox(
-                            "🎯 Precision Tracking Radar",
+                            "Precision Tracking Radar",
                             value=st.session_state.sensor_show_fire_control,
                             key="sensor_toggle_fire_control",
-                            help="Toggle Precision Tracking Radar visualization (ADVISORY ONLY — SENSOR VISUALIZATION. NO CONTROL OR DECISION LOGIC.)"
+                            help="Toggle Precision Tracking Radar visualization (ADVISORY ONLY)"
                         )
                         st.session_state.sensor_show_fire_control = show_fire_control
                     
-                    with col2:
+                    with st.container():
+                        st.subheader("Passive Sensors")
                         show_passive = st.checkbox(
-                            "📻 Passive / ESM Sensor",
+                            "Passive / ESM Sensor",
                             value=st.session_state.sensor_show_passive,
                             key="sensor_toggle_passive",
                             help="Toggle Passive / ESM Sensor visualization"
                         )
                         st.session_state.sensor_show_passive = show_passive
                     
-                    # Global opacity slider (calm, readable, defence-grade)
-                    use_custom_opacity = st.checkbox(
-                        "Adjust Coverage Opacity",
-                        value=st.session_state.sensor_global_opacity is not None,
-                        key="sensor_use_custom_opacity",
-                        help="Override default sensor coverage volume opacity"
-                    )
-                    
-                    global_opacity = None
-                    if use_custom_opacity:
-                        # Default opacity value if not set
-                        if st.session_state.sensor_global_opacity is None:
-                            st.session_state.sensor_global_opacity = 0.12
-                        
-                        global_opacity = st.slider(
-                            "Coverage Volume Opacity",
-                            min_value=0.05,
-                            max_value=0.25,
-                            value=st.session_state.sensor_global_opacity,
-                            step=0.01,
-                            key="sensor_opacity_slider",
-                            help="Adjust opacity of all sensor coverage volumes (0.05 = very faint, 0.25 = more visible)"
+                    with st.container():
+                        st.subheader("Visual Aids")
+                        if "show_sensor_track_hints" not in st.session_state:
+                            st.session_state["show_sensor_track_hints"] = True
+                        show_sensor_hints = st.checkbox(
+                            "Show Sensor-Track Coverage Hints",
+                            value=st.session_state["show_sensor_track_hints"],
+                            key="show_sensor_track_hints",
+                            help="Display faint dotted lines showing tracks within sensor coverage volumes (geometric check only, no detection logic)"
                         )
-                        st.session_state.sensor_global_opacity = global_opacity
-                    else:
-                        st.session_state.sensor_global_opacity = None
+                        use_custom_opacity = st.checkbox(
+                            "Adjust Coverage Opacity",
+                            value=st.session_state.sensor_global_opacity is not None,
+                            key="sensor_use_custom_opacity",
+                            help="Override default sensor coverage volume opacity"
+                        )
+                        global_opacity = None
+                        if use_custom_opacity:
+                            if st.session_state.sensor_global_opacity is None:
+                                st.session_state.sensor_global_opacity = 0.12
+                            global_opacity = st.slider(
+                                "Coverage Volume Opacity",
+                                min_value=0.05,
+                                max_value=0.25,
+                                value=st.session_state.sensor_global_opacity,
+                                step=0.01,
+                                key="sensor_opacity_slider",
+                                help="Adjust opacity of all sensor coverage volumes (0.05 = very faint, 0.25 = more visible)"
+                            )
+                            st.session_state.sensor_global_opacity = global_opacity
+                        else:
+                            st.session_state.sensor_global_opacity = None
                     
-                    # Build sensor layer controls dict
                     sensor_layer_controls = {
                         "show_surveillance": show_surveillance,
                         "show_fire_control": show_fire_control,
                         "show_passive": show_passive,
                         "global_opacity": global_opacity
                     }
-                    
-                    # ---- DEFAULT STATE (MUST COME BEFORE WIDGET) ----
-                    if "show_sensor_track_hints" not in st.session_state:
-                        st.session_state["show_sensor_track_hints"] = True
-                    show_sensor_hints = st.checkbox(
-                        "Show Sensor-Track Coverage Hints",
-                        value=st.session_state["show_sensor_track_hints"],
-                        key="show_sensor_track_hints",
-                        help="Display faint dotted lines showing tracks within sensor coverage volumes (geometric check only, no detection logic)"
-                    )
                     
                     # --- Simulation Time Control (RESTORED) ---
                     SIM_DURATION = 120.0
@@ -1285,8 +1278,21 @@ with tab6:
                     )
                     st.caption("Drag to scrub through the simulated timeline")
                     
-                    # Figure: create ONCE per scenario, reuse on slider/sensor change
+                    # Threat Density (visibility only; scenario-aware default)
                     current_scenario = str(st.session_state.get("selected_scenario", "civil_air_traffic") or "civil_air_traffic")
+                    show_density_default = bool(training_mode) or (current_scenario in ("drone_swarm", "saturation_test"))
+                    if "show_threat_density" not in st.session_state:
+                        st.session_state["show_threat_density"] = show_density_default
+                    show_threat_density = st.checkbox(
+                        "Show Threat Density",
+                        value=st.session_state["show_threat_density"],
+                        key="show_threat_density",
+                        help="Advisory only. Highlights track density; does not affect positions or logic."
+                    )
+                    st.caption("Threat Density (Advisory): Low = Blue, Medium = Yellow, High = Orange/Red.")
+                    st.caption("Urgency Levels (TTC): LOW — >180 s | MEDIUM — 60–180 s | HIGH — <60 s")
+                    
+                    # Figure: create ONCE per scenario, reuse on slider/sensor change
                     active_scenario = str(st.session_state.get("active_scenario") or current_scenario)
                     need_new_figure = "battlespace_fig" not in st.session_state or active_scenario != current_scenario
                     
@@ -1325,6 +1331,78 @@ with tab6:
                     try:
                         from abhedya.dashboard.battlespace_3d import update_track_positions
                         update_track_positions(fig_3d, data, float(st.session_state.get("sim_time", 0.0)))
+                    except Exception:
+                        pass
+                    
+                    # Threat Density layer (visual only; add or update trace, never recreate figure)
+                    try:
+                        from abhedya.dashboard.battlespace_3d import compute_threat_density_points
+                        import plotly.graph_objects as go
+                        import math as _math
+                        density_points = compute_threat_density_points(data)
+                        xs = [p[0] for p in density_points]
+                        ys = [p[1] for p in density_points]
+                        zs = [p[2] for p in density_points]
+                        density_trace = None
+                        for tr in fig_3d.data:
+                            if getattr(tr, "name", None) == "Threat Density (Advisory)":
+                                density_trace = tr
+                                break
+                        if density_trace is not None:
+                            density_trace.x = xs
+                            density_trace.y = ys
+                            density_trace.z = zs
+                            density_trace.visible = show_threat_density
+                        else:
+                            density_trace = go.Scatter3d(
+                                x=xs,
+                                y=ys,
+                                z=zs,
+                                mode="markers",
+                                marker=dict(size=30, color="orange", opacity=0.12),
+                                name="Threat Density (Advisory)",
+                                hoverinfo="skip",
+                                showlegend=True,
+                            )
+                            density_trace.visible = show_threat_density
+                            fig_3d.add_trace(density_trace)
+                        # Saturation cluster hint: soft halo ring at centroid when dense (visual only)
+                        halo_trace = None
+                        for tr in fig_3d.data:
+                            if getattr(tr, "name", None) == "Density Halo (Advisory)":
+                                halo_trace = tr
+                                break
+                        n_pts = len(density_points)
+                        show_halo = show_threat_density and n_pts >= 5
+                        if n_pts >= 5:
+                            cx = sum(xs) / n_pts
+                            cy = sum(ys) / n_pts
+                            cz = sum(zs) / n_pts
+                            radius_km = 2.0
+                            steps = 32
+                            halo_x = [cx + radius_km * _math.cos(2 * _math.pi * i / steps) for i in range(steps + 1)]
+                            halo_y = [cy + radius_km * _math.sin(2 * _math.pi * i / steps) for i in range(steps + 1)]
+                            halo_z = [cz] * (steps + 1)
+                            if halo_trace is not None:
+                                halo_trace.x = halo_x
+                                halo_trace.y = halo_y
+                                halo_trace.z = halo_z
+                                halo_trace.visible = show_halo
+                            else:
+                                halo_trace_new = go.Scatter3d(
+                                    x=halo_x,
+                                    y=halo_y,
+                                    z=halo_z,
+                                    mode="lines",
+                                    line=dict(color="rgba(255,165,0,0.25)", width=2, dash="dash"),
+                                    name="Density Halo (Advisory)",
+                                    hoverinfo="skip",
+                                    showlegend=False,
+                                )
+                                halo_trace_new.visible = show_halo
+                                fig_3d.add_trace(halo_trace_new)
+                        elif halo_trace is not None:
+                            halo_trace.visible = False
                     except Exception:
                         pass
                     

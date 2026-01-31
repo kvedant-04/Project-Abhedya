@@ -34,6 +34,52 @@ CLASSIFICATION_COLOR_MAP = {
     "Hostile": "#E74C3C",
 }
 
+# Critical zone radius (m) for TTC — must match zone definition. Advisory only.
+TTC_CRITICAL_RADIUS_M = 5000.0
+
+
+def compute_ttc_seconds(track: Dict[str, Any], asset_pos: Dict[str, float], critical_radius_m: float) -> Optional[float]:
+    """
+    Advisory TTC (time to critical zone boundary) assuming straight-line motion.
+    Does NOT mutate anything; does NOT use sim_time or prediction. Deterministic.
+    Returns None if not applicable.
+    """
+    try:
+        pos = track.get("position") if isinstance(track.get("position"), dict) else {}
+        tx = float(pos.get("x", 0.0))
+        ty = float(pos.get("y", 0.0))
+        ax = float(asset_pos.get("x", 0.0))
+        ay = float(asset_pos.get("y", 0.0))
+        dx = ax - tx
+        dy = ay - ty
+        distance = (dx * dx + dy * dy) ** 0.5
+        speed = track.get("speed_mps")
+        if speed is None or not isinstance(speed, (int, float)):
+            vel = track.get("velocity") if isinstance(track.get("velocity"), dict) else {}
+            vx = float(vel.get("vx", 0.0))
+            vy = float(vel.get("vy", 0.0))
+            vz = float(vel.get("vz", 0.0))
+            speed = (vx * vx + vy * vy + vz * vz) ** 0.5
+        if not speed or speed <= 0:
+            return None
+        remaining = distance - critical_radius_m
+        if remaining <= 0:
+            return 0.0
+        return remaining / speed
+    except Exception:
+        return None
+
+
+def get_urgency_level(ttc_seconds: Optional[float]) -> Optional[str]:
+    """Urgency from TTC (locked): TTC > 180 → LOW, 60 < TTC ≤ 180 → MEDIUM, TTC ≤ 60 → HIGH."""
+    if ttc_seconds is None:
+        return None
+    if ttc_seconds > 180.0:
+        return "LOW"
+    if ttc_seconds > 60.0:
+        return "MEDIUM"
+    return "HIGH"
+
 
 class Battlespace3D:
     """
@@ -1069,7 +1115,7 @@ class Battlespace3D:
                     legendgroup='zones',
                     showlegend=True,
                     name=name,
-                    hovertemplate=hover_template_zone,
+                    hovertemplate=None,
                     hoverinfo='skip'
                 )
                 if tri_i and tri_j and tri_k:
@@ -1353,6 +1399,8 @@ class Battlespace3D:
                 except Exception:
                     pass
 
+            # Draw order: trajectories first, then aircraft markers LAST so hover works
+            marker_list = []
             for idx, track in enumerate(tracks):
                 # Render every track possible; if structure is unexpected, fall back to defaults
                 if not isinstance(track, dict):
@@ -1726,9 +1774,14 @@ class Battlespace3D:
                 except Exception:
                     pass
 
+                # TTC & urgency (advisory only; no mutation, deterministic)
+                ttc_seconds = compute_ttc_seconds(track, defender_position, TTC_CRITICAL_RADIUS_M)
+                urgency_level = get_urgency_level(ttc_seconds)
+                ttc_display = f"{int(round(ttc_seconds))} s" if ttc_seconds is not None else "N/A"
+                urgency_display = urgency_level if urgency_level else "N/A"
+
                 # Attach mandatory metadata to the plotted object via `customdata`
-                # Order: [Track ID, Classification, Threat State, Altitude (m), Speed (km/h), Heading (deg), Tracking Status, Detected By]
-                # Detected By: in training mode never None; deterministic synthetic sensor list
+                # Order: [..., Detected By, Time to Criticality, Urgency Level]
                 _sensor_names = ["Long-Range Surveillance Radar", "Precision Tracking Radar", "Passive / ESM Sensor"]
                 try:
                     _h = hashlib.md5(str(track_id).encode("utf-8")).hexdigest()
@@ -1740,9 +1793,11 @@ class Battlespace3D:
                         detected_by_str = ", ".join(sorted([_sensor_names[_idx], _sensor_names[_idx2]]))
                 except Exception:
                     detected_by_str = "Surveillance Radar"
-                customdata_point = [track_id, classification_enum, threat_state_display, float(z), float(speed_kmh), float(heading_deg), tracking_status_display, detected_by_str]
+                if not detected_by_str or str(detected_by_str).strip() == "" or str(detected_by_str) == "None":
+                    detected_by_str = "Surveillance Radar (Synthetic)"
+                customdata_point = [track_id, classification_enum, threat_state_display, float(z), float(speed_kmh), float(heading_deg), tracking_status_display, detected_by_str, ttc_display, urgency_display]
 
-                # Hovertemplate — exact, multi-line, with thousands separator for altitude; Detected By appended
+                # Hovertemplate — existing fields + Time to Criticality & Urgency Level
                 hovertemplate = (
                     "Track ID: %{customdata[0]}<br>"
                     "Classification: %{customdata[1]}<br>"
@@ -1751,7 +1806,9 @@ class Battlespace3D:
                     "Heading: %{customdata[5]:.0f}\u00B0<br>"
                     "Threat State: %{customdata[2]}<br>"
                     "Tracking Status: %{customdata[6]}<br>"
-                    "Detected By: %{customdata[7]}<extra></extra>"
+                    "Detected By: %{customdata[7]}<br>"
+                    "Time to Criticality: %{customdata[8]}<br>"
+                    "Urgency Level: %{customdata[9]}<extra></extra>"
                 )
                 
                 # Interpolate marker position along precomputed trajectory at `sim_time` if available.
@@ -1795,8 +1852,20 @@ class Battlespace3D:
                     display_z = z if z and z > 1.0 else 1.0
 
                 final_marker_size = marker_base_size + (3 if is_highlight else 0)
-                outline_color = '#FFFF7F' if is_highlight else '#FFFFFF'
-                outline_width = 5 if is_highlight else 3
+                if is_highlight:
+                    outline_color = '#FFFF7F'
+                    outline_width = 5
+                else:
+                    # Urgency-based outline (advisory only): LOW thin grey/blue, MEDIUM amber thicker, HIGH red thicker
+                    if urgency_level == "HIGH":
+                        outline_color = "#E74C3C"
+                        outline_width = 4
+                    elif urgency_level == "MEDIUM":
+                        outline_color = "#F1C40F"
+                        outline_width = 3
+                    else:
+                        outline_color = "#95A5A6"
+                        outline_width = 2
 
                 marker_props = dict(
                     size=final_marker_size,
@@ -1806,22 +1875,9 @@ class Battlespace3D:
                     opacity=1.0  # Solid, non-transparent markers for professional appearance
                 )
 
-                # Consolidate track legend into a single 'Tracks' entry; keep hover per-track
+                # Defer marker add so all markers are drawn LAST (after trajectories)
                 show_track_legend = not tracks_legend_added
-                # Add per-track marker (hover contains identity). Markers are grouped under 'objects'.
-                fig.add_trace(go.Scatter3d(
-                    x=[x_km],
-                    y=[y_km],
-                    z=[display_z],
-                    mode='markers',
-                    marker=marker_props,
-                    name=f"Track_{track_id}",
-                    customdata=[customdata_point],
-                    hovertemplate=hovertemplate,
-                    hoverinfo='text',
-                    hoverlabel=dict(namelength=0),
-                    showlegend=True
-                ))
+                marker_list.append((x_km, y_km, display_z, marker_props, customdata_point, hovertemplate, track_id, show_track_legend))
 
                 # Direction indicator: short projected movement vector for clarity
                 try:
@@ -1858,6 +1914,24 @@ class Battlespace3D:
                         highlight_center = (x_km, y_km, z)
                     except Exception:
                         pass
+
+            # Add all aircraft markers LAST so they capture hover (draw order)
+            for (x_km, y_km, display_z, marker_props, customdata_point, hovertemplate, track_id, show_track_legend) in marker_list:
+                fig.add_trace(go.Scatter3d(
+                    x=[x_km],
+                    y=[y_km],
+                    z=[display_z],
+                    mode='markers',
+                    marker=marker_props,
+                    name=f"Track_{track_id}",
+                    customdata=[customdata_point],
+                    hovertemplate=hovertemplate,
+                    hoverinfo='text',
+                    hoverlabel=dict(namelength=-1),
+                    showlegend=show_track_legend
+                ))
+                if show_track_legend:
+                    tracks_legend_added = True
             
             # CRITICAL: Return highlight center (or first track center) - never return None when tracks exist
             return highlight_center
@@ -2499,7 +2573,7 @@ class Battlespace3D:
                 opacity=opacity,  # Semi-transparent (adjustable for training mode)
                 lighting=dict(ambient=0.6, diffuse=0.6, specular=0.2, roughness=0.9),
                 showlegend=False,
-                hovertemplate=hover_text + '<extra></extra>',
+                hovertemplate=None,
                 hoverinfo='skip'
             ))
         except Exception:
@@ -2570,7 +2644,7 @@ class Battlespace3D:
                 opacity=opacity,  # Semi-transparent (adjustable for training mode)
                 lighting=dict(ambient=0.6, diffuse=0.65, specular=0.2, roughness=0.8),
                 showlegend=False,
-                hovertemplate=hover_text + '<extra></extra>',
+                hovertemplate=None,
                 hoverinfo='skip'
             ))
         except Exception:
@@ -2656,7 +2730,7 @@ class Battlespace3D:
                 ),
                 name="Passive Sensor Arc",
                 showlegend=False,
-                hovertemplate=hover_text + '<extra></extra>',
+                hovertemplate=None,
                 hoverinfo='skip'
             ))
             
@@ -2670,7 +2744,7 @@ class Battlespace3D:
                     opacity=opacity,  # Semi-transparent for passive sensor
                     lighting=dict(ambient=0.55, diffuse=0.6, specular=0.15, roughness=0.9),
                     showlegend=False,
-                    hovertemplate=hover_text + '<extra></extra>',
+                    hovertemplate=None,
                     hoverinfo='skip'
                 ))
         except Exception:
@@ -2864,7 +2938,7 @@ class Battlespace3D:
                     color=coverage_color,
                     opacity=0.08,
                     showlegend=False,
-                    hovertemplate=f'<b>{sensor_name} Coverage</b><br>Range: {coverage_radius_km:.0f} km<br>ADVISORY ONLY - Visual reference<extra></extra>',
+                    hovertemplate=None,
                     hoverinfo='skip'
                 ))
         except Exception:
@@ -3253,6 +3327,32 @@ class Battlespace3D:
                 ))
         except Exception:
             pass  # Fail silently
+
+
+def compute_threat_density_points(tracks: List[Dict[str, Any]]) -> List[Tuple[float, float, float]]:
+    """
+    Derive (x_km, y_km, z_m) points from existing track positions only.
+    VISUAL ONLY — does not modify tracks. Coordinate system matches battlespace (x,y km, z m).
+    """
+    out = []
+    if not isinstance(tracks, list):
+        return out
+    for t in tracks:
+        if not isinstance(t, dict):
+            continue
+        pos = t.get("position") if isinstance(t.get("position"), dict) else {}
+        x = pos.get("x") if "x" in pos else None
+        y = pos.get("y") if "y" in pos else None
+        if x is None or y is None:
+            continue
+        try:
+            x_km = float(x) / 1000.0
+            y_km = float(y) / 1000.0
+            z_m = float(pos.get("z", 0))
+        except (TypeError, ValueError):
+            continue
+        out.append((x_km, y_km, z_m))
+    return out
 
 
 def update_track_positions(
