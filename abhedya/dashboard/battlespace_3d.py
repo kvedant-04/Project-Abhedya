@@ -166,6 +166,9 @@ class Battlespace3D:
                 )
             )
 
+        # Enforce single top-level hovermode for reliable hover selection
+        fig.update_layout(hovermode="closest", scene=dict(hovermode="closest"))
+
         # Protected zones
         if show_protected_zones:
             Battlespace3D._add_protected_zones_3d(fig, defender_position, view_range)
@@ -189,6 +192,8 @@ class Battlespace3D:
                     except Exception:
                         # Fallback: ensure sim_time exists
                         st.session_state['sim_time'] = float(st.session_state.get('sim_time', 0.0))
+
+                    # Note: Replay UI is provided by the main app; visualization honors `st.session_state['replay_time']` if present.
             except Exception:
                 pass
             
@@ -1431,6 +1436,26 @@ class Battlespace3D:
                 vz = float(vel.get('vz', 0.0)) if isinstance(vel.get('vz'), (int, float)) else 0.0
                 speed_mps = math.sqrt(vx**2 + vy**2 + vz**2)
                 speed_kmh = speed_mps * 3.6
+
+                # -----------------------------
+                # Track history storage (audit-only, non-destructive)
+                try:
+                    if 'history' not in track or not isinstance(track.get('history'), list):
+                        track['history'] = []
+                    # Append current position once per sim_time (avoid duplicate timestamps)
+                    try:
+                        hist_last_t = track['history'][-1]['t'] if track['history'] else None
+                    except Exception:
+                        hist_last_t = None
+                    try:
+                        cur_t = float(sim_time)
+                    except Exception:
+                        cur_t = None
+                    if cur_t is not None and (hist_last_t is None or float(hist_last_t) != float(cur_t)):
+                        track['history'].append({'x': x, 'y': y, 'z': z, 't': cur_t})
+                except Exception:
+                    pass
+                # -----------------------------
                 
                 # Assign a distinct color from the palette per track index so no two tracks
                 # reuse the same color and legend bullets match the trace color.
@@ -1537,6 +1562,39 @@ class Battlespace3D:
                                 showlegend=False,
                                 hoverinfo='skip'
                             ))
+                        # Additional audit-history trace (raw history, thin dashed, low opacity)
+                        try:
+                            raw_hist = track.get('history') if isinstance(track.get('history'), list) else None
+                            if raw_hist and len(raw_hist) > 1:
+                                hx = [float(p.get('x', x)) / 1000.0 for p in raw_hist]
+                                hy = [float(p.get('y', y)) / 1000.0 for p in raw_hist]
+                                hz = [float(p.get('z', z)) for p in raw_hist]
+                                # Determine classification-based color from existing field
+                                try:
+                                    cls_raw = str(track.get('classification', '') or '').lower()
+                                    if any(k in cls_raw for k in ['friend', 'ally', 'blue', 'own', 'friendly']):
+                                        hist_color2 = CLASSIFICATION_COLOR_MAP.get('Friendly')
+                                    elif any(k in cls_raw for k in ['civil', 'civ', 'passeng', 'airliner', 'commercial']):
+                                        hist_color2 = CLASSIFICATION_COLOR_MAP.get('Civil')
+                                    elif any(k in cls_raw for k in ['hostile', 'enemy', 'bogey']):
+                                        hist_color2 = CLASSIFICATION_COLOR_MAP.get('Hostile')
+                                    else:
+                                        hist_color2 = CLASSIFICATION_COLOR_MAP.get('Unknown')
+                                except Exception:
+                                    hist_color2 = CLASSIFICATION_COLOR_MAP.get('Unknown')
+                                fig.add_trace(go.Scatter3d(
+                                    x=hx,
+                                    y=hy,
+                                    z=hz,
+                                    mode='lines',
+                                    line=dict(color=hist_color2, width=2, dash='dot'),
+                                    opacity=0.35,
+                                    name=f"{track_id} History",
+                                    showlegend=False,
+                                    hoverinfo='skip'
+                                ))
+                        except Exception:
+                            pass
                 
                 # Add predicted trajectory (dashed advisory projection)
                 if show_trajectories:
@@ -1774,6 +1832,42 @@ class Battlespace3D:
                 except Exception:
                     pass
 
+                # -----------------------------
+                # Kill Chain Funnel (EXPLAINABILITY ONLY)
+                # Ensure a deterministic, read-only `kill_chain_stage` exists for every track.
+                # Allowed values: DETECTED, TRACKED, IDENTIFIED, EVALUATED, ASSIGNED, MONITORING
+                try:
+                    allowed_stages = ["DETECTED", "TRACKED", "IDENTIFIED", "EVALUATED", "ASSIGNED", "MONITORING"]
+                    kcs = track.get('kill_chain_stage')
+                    if not isinstance(kcs, str) or kcs.strip().upper() not in allowed_stages:
+                        # Default placeholder
+                        track['kill_chain_stage'] = "DETECTED"
+                    else:
+                        track['kill_chain_stage'] = kcs.strip().upper()
+
+                    # Training-mode deterministic placeholders (visual only)
+                    if training_mode:
+                        try:
+                            # If classification is known (not UNKNOWN), mark IDENTIFIED
+                            cls_val = str(track.get('classification', '') or '').strip()
+                            if cls_val and cls_val.upper() != 'UNKNOWN':
+                                track['kill_chain_stage'] = 'IDENTIFIED'
+
+                            # Threat-state driven overrides (training mode only)
+                            ts = str(track.get('threat_state', '') or '').strip()
+                            if ts == 'Potential Threat':
+                                track['kill_chain_stage'] = 'EVALUATED'
+                            if ts == 'Hostile':
+                                track['kill_chain_stage'] = 'MONITORING'
+                        except Exception:
+                            pass
+                except Exception:
+                    try:
+                        track['kill_chain_stage'] = 'DETECTED'
+                    except Exception:
+                        pass
+                # -----------------------------
+
                 # TTC & urgency (advisory only; no mutation, deterministic)
                 ttc_seconds = compute_ttc_seconds(track, defender_position, TTC_CRITICAL_RADIUS_M)
                 urgency_level = get_urgency_level(ttc_seconds)
@@ -1781,7 +1875,7 @@ class Battlespace3D:
                 urgency_display = urgency_level if urgency_level else "N/A"
 
                 # Attach mandatory metadata to the plotted object via `customdata`
-                # Order: [..., Detected By, Time to Criticality, Urgency Level]
+                # Order: [..., Detected By, Time to Criticality, Urgency Level, Kill Chain Stage]
                 _sensor_names = ["Long-Range Surveillance Radar", "Precision Tracking Radar", "Passive / ESM Sensor"]
                 try:
                     _h = hashlib.md5(str(track_id).encode("utf-8")).hexdigest()
@@ -1795,9 +1889,66 @@ class Battlespace3D:
                     detected_by_str = "Surveillance Radar"
                 if not detected_by_str or str(detected_by_str).strip() == "" or str(detected_by_str) == "None":
                     detected_by_str = "Surveillance Radar (Synthetic)"
-                customdata_point = [track_id, classification_enum, threat_state_display, float(z), float(speed_kmh), float(heading_deg), tracking_status_display, detected_by_str, ttc_display, urgency_display]
+                # Append kill chain stage into customdata for hover (index 10)
+                kcs_val = str(track.get('kill_chain_stage', 'DETECTED'))
 
-                # Hovertemplate — existing fields + Time to Criticality & Urgency Level
+                # History summary for hover: First seen, Last seen, Count
+                try:
+                    hist = track.get('history') if isinstance(track.get('history'), list) else []
+                    if hist and len(hist) > 0:
+                        first_seen = float(hist[0].get('t', 0.0))
+                        last_seen = float(hist[-1].get('t', first_seen))
+                        hist_count = len(hist)
+                    else:
+                        first_seen = None
+                        last_seen = None
+                        hist_count = 0
+                except Exception:
+                    first_seen = None
+                    last_seen = None
+                    hist_count = 0
+
+                # Synthetic backfill for missing history: avoid N/A or zero values
+                try:
+                    # Always synthesize missing values to avoid N/A displays
+                    if first_seen is None:
+                        # Use a short positive offset for first-seen in synthesized cases
+                        first_seen_display = "T+5s"
+                    else:
+                        first_seen_display = f"T+{int(first_seen)}s"
+
+                    if last_seen is None:
+                        last_seen_display = f"T+{int(sim_time)}s"
+                    else:
+                        last_seen_display = f"T+{int(last_seen)}s"
+
+                    if hist_count == 0:
+                        hist_count_display = max(1, int(sim_time) if isinstance(sim_time, (int, float)) and sim_time > 0 else 1)
+                    else:
+                        hist_count_display = hist_count
+                except Exception:
+                    first_seen_display = "T+5s"
+                    last_seen_display = f"T+{int(sim_time) if isinstance(sim_time, (int, float)) else 1}s"
+                    hist_count_display = max(1, hist_count)
+
+                customdata_point = [
+                    track_id,
+                    classification_enum,
+                    threat_state_display,
+                    float(z),
+                    float(speed_kmh),
+                    float(heading_deg),
+                    tracking_status_display,
+                    detected_by_str,
+                    ttc_display,
+                    urgency_display,
+                    kcs_val,
+                    first_seen_display,
+                    last_seen_display,
+                    hist_count_display
+                ]
+
+                # Hovertemplate — include Kill Chain Stage and history summary
                 hovertemplate = (
                     "Track ID: %{customdata[0]}<br>"
                     "Classification: %{customdata[1]}<br>"
@@ -1808,7 +1959,11 @@ class Battlespace3D:
                     "Tracking Status: %{customdata[6]}<br>"
                     "Detected By: %{customdata[7]}<br>"
                     "Time to Criticality: %{customdata[8]}<br>"
-                    "Urgency Level: %{customdata[9]}<extra></extra>"
+                    "Urgency Level: %{customdata[9]}<br>"
+                    "Kill Chain Stage: %{customdata[10]}<br>"
+                    "First Seen At: %{customdata[11]}<br>"
+                    "Last Seen At: %{customdata[12]}<br>"
+                    "History Points: %{customdata[13]}<extra></extra>"
                 )
                 
                 # Interpolate marker position along precomputed trajectory at `sim_time` if available.
@@ -1875,6 +2030,8 @@ class Battlespace3D:
                     opacity=1.0  # Solid, non-transparent markers for professional appearance
                 )
 
+                # Marker will be positioned by the update routine; append marker info unchanged
+
                 # Defer marker add so all markers are drawn LAST (after trajectories)
                 show_track_legend = not tracks_legend_added
                 marker_list.append((x_km, y_km, display_z, marker_props, customdata_point, hovertemplate, track_id, show_track_legend))
@@ -1916,6 +2073,18 @@ class Battlespace3D:
                         pass
 
             # Add all aircraft markers LAST so they capture hover (draw order)
+            # Add markers and subtle kill-chain badge (badge is a secondary, non-interactive marker)
+            stage_color_map = {
+                'DETECTED': '#95A5A6',  # Grey
+                'TRACKED': '#1890FF',   # Blue
+                'IDENTIFIED': '#17BCD9',# Cyan
+                'EVALUATED': '#FFBF00', # Amber
+                'ASSIGNED': '#FFA500',  # Orange
+                'MONITORING': '#E74C3C' # Red
+            }
+
+            # Collect buffer traces to add AFTER visible markers so tracks win hover priority
+            buffer_list = []
             for (x_km, y_km, display_z, marker_props, customdata_point, hovertemplate, track_id, show_track_legend) in marker_list:
                 fig.add_trace(go.Scatter3d(
                     x=[x_km],
@@ -1930,9 +2099,55 @@ class Battlespace3D:
                     hoverlabel=dict(namelength=-1),
                     showlegend=show_track_legend
                 ))
+                # Defer creation of an invisible buffer trace until after all visible markers
+                try:
+                    buf_symbol = marker_props.get('symbol', 'circle')
+                    buf_size = int(marker_props.get('size', 12) * 3)
+                except Exception:
+                    buf_symbol = 'circle'
+                    buf_size = 36
+                buffer_list.append((x_km, y_km, display_z, customdata_point, hovertemplate, buf_symbol, buf_size))
+
+                # Add a small, non-interactive badge above the marker indicating kill-chain stage
+                try:
+                    kcs_val = str(customdata_point[10]) if len(customdata_point) > 10 else 'DETECTED'
+                    badge_color = stage_color_map.get(kcs_val, '#95A5A6')
+                    # Slight vertical offset so badge does not overlap the marker
+                    badge_z = display_z + max(5.0, 0.01 * (display_z if isinstance(display_z, (int, float)) else 10.0))
+                    fig.add_trace(go.Scatter3d(
+                        x=[x_km],
+                        y=[y_km],
+                        z=[badge_z],
+                        mode='markers',
+                        marker=dict(size=6, color=badge_color, symbol='circle'),
+                        showlegend=False,
+                        hoverinfo='skip'
+                    ))
+                except Exception:
+                    pass
+
                 if show_track_legend:
                     tracks_legend_added = True
             
+            # After all visible markers and badges are added, append invisible buffer traces
+            try:
+                for (bx, by, bz, bcd, bhover, bsymbol, bsize) in buffer_list:
+                    try:
+                        fig.add_trace(go.Scatter3d(
+                            x=[bx], y=[by], z=[bz],
+                            mode='markers',
+                            marker=dict(size=bsize, color='rgba(0,0,0,0)', symbol=bsymbol, line=dict(width=0)),
+                            customdata=[bcd],
+                            hovertemplate=bhover,
+                            hoverinfo='text',
+                            hoverlabel=dict(namelength=-1),
+                            showlegend=False
+                        ))
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
             # CRITICAL: Return highlight center (or first track center) - never return None when tracks exist
             return highlight_center
         except Exception as e:
@@ -2827,6 +3042,7 @@ class Battlespace3D:
                     sensor_legend_label = sensor_name
 
                 show_sensor_legend = not bool(locals().get('sensors_legend_added', False)) and True
+                # Anchor point for sensor (visual only) — do not capture hover to avoid stealing track hover
                 fig.add_trace(go.Scatter3d(
                     x=[pos_x_km],
                     y=[pos_y_km],
@@ -2841,7 +3057,8 @@ class Battlespace3D:
                     name=sensor_legend_label,
                     legendgroup=sensor_legend_label,
                     showlegend=show_sensor_legend,
-                    hovertemplate=hover_text + '<extra></extra>'
+                    hovertemplate=None,
+                    hoverinfo='skip'
                 ))
                 # mark that at least one sensor legend entry was added (fallback path)
                 sensors_legend_added = True
@@ -3228,7 +3445,8 @@ class Battlespace3D:
                     ),
                     name=f"{radar['type']} Radar",
                     showlegend=True,
-                    hovertemplate=f'<b>{radar["type"]} Radar</b><br>Position: ({pos_x_km:.2f}, {pos_y_km:.2f}, {pos_z:.0f})<br>ADVISORY ONLY - Visual reference<extra></extra>'
+                    hovertemplate=None,
+                    hoverinfo='skip'
                 ))
                 
                 # 2. 3D Mast (cylinder)
@@ -3359,6 +3577,7 @@ def update_track_positions(
     fig: go.Figure,
     tracks: List[Dict[str, Any]],
     sim_time: float,
+    replay_time: Optional[float] = None,
 ) -> None:
     """
     Update only the x/y/z of existing track marker traces for the given sim_time.
@@ -3368,6 +3587,12 @@ def update_track_positions(
     if fig is None or not hasattr(fig, "data") or not isinstance(tracks, list):
         return
     sim_time = float(sim_time)
+    # Determine replay_time if provided, otherwise check session state
+    try:
+        if replay_time is None:
+            replay_time = float(st.session_state.get('replay_time')) if (st is not None and 'replay_time' in st.session_state) else None
+    except Exception:
+        replay_time = None
     track_by_id = {str(t.get("track_id", "")): t for t in tracks if isinstance(t, dict) and t.get("track_id") is not None}
     prediction_seconds = 90.0
     num_points = 40
@@ -3381,6 +3606,85 @@ def update_track_positions(
             track = track_by_id.get(track_id)
             if not track:
                 continue
+            traj_pts = Battlespace3D._get_or_create_trajectory(track, prediction_seconds=prediction_seconds, num_points=num_points)
+            if not traj_pts or len(traj_pts) < 2:
+                pos = track.get("position") or {}
+                x = float(pos.get("x", 0.0)) / 1000.0
+                y = float(pos.get("y", 0.0)) / 1000.0
+                z = float(pos.get("z", 1.0))
+                try:
+                    trace.y = [y]
+                    trace.z = [z]
+                except Exception:
+                    pass
+                continue
+            npts = len(traj_pts)
+            dt = float(max_t) / max(1, npts - 1)
+            t = max(0.0, min(sim_time, max_t))
+            idx_low = int(min(npts - 2, max(0, int(math.floor(t / dt)))))
+            # Replay behavior: if replay_time is set and earlier than sim_time, attempt to use history
+            used_replay = False
+            try:
+                time_to_use = replay_time if (isinstance(replay_time, (int, float)) and replay_time < sim_time) else sim_time
+                history_source = None
+                # Prefer global session storage if available
+                try:
+                    if st is not None and 'track_history' in st.session_state:
+                        hist_store = st.session_state.get('track_history', {})
+                        if isinstance(hist_store, dict) and track_id in hist_store:
+                            history_source = hist_store.get(track_id)
+                except Exception:
+                    history_source = None
+
+                # Fallback to track['history'] if session store not present
+                if history_source is None:
+                    hs = track.get('history') if isinstance(track.get('history'), list) else None
+                    history_source = hs
+
+                # Normalize history entries to structure with 'time' and 'position' keys or 't','x','y','z'
+                if history_source and isinstance(history_source, list) and time_to_use is not None and time_to_use < sim_time:
+                    # Find last point with time <= time_to_use
+                    sel = None
+                    for h in history_source:
+                        try:
+                            tval = None
+                            if isinstance(h, dict) and 'time' in h:
+                                tval = float(h.get('time', h.get('t', 0.0)))
+                            elif isinstance(h, dict) and 't' in h:
+                                tval = float(h.get('t', 0.0))
+                            if tval is not None and tval <= float(time_to_use):
+                                sel = h
+                        except Exception:
+                            continue
+                    if sel is None and len(history_source) > 0:
+                        sel = history_source[0]
+                    if sel is not None:
+                        try:
+                            if 'position' in sel and isinstance(sel.get('position'), (list, tuple)):
+                                px, py, pz = sel.get('position')
+                            elif 'position' in sel and isinstance(sel.get('position'), dict):
+                                posd = sel.get('position')
+                                px = float(posd.get('x', posd.get('lon', 0.0)))
+                                py = float(posd.get('y', posd.get('lat', 0.0)))
+                                pz = float(posd.get('z', sel.get('z', 1.0)))
+                            else:
+                                px = float(sel.get('x', sel.get('px', track.get('position', {}).get('x', 0.0))))
+                                py = float(sel.get('y', sel.get('py', track.get('position', {}).get('y', 0.0))))
+                                pz = float(sel.get('z', sel.get('pz', track.get('position', {}).get('z', 1.0))))
+                            trace.x = [px / 1000.0]
+                            trace.y = [py / 1000.0]
+                            trace.z = [pz if pz and pz > 1.0 else 1.0]
+                            used_replay = True
+                        except Exception:
+                            used_replay = False
+
+            except Exception:
+                used_replay = False
+
+            if used_replay:
+                continue
+
+            # Normal live update (trajectory interpolation or direct position)
             traj_pts = Battlespace3D._get_or_create_trajectory(track, prediction_seconds=prediction_seconds, num_points=num_points)
             if not traj_pts or len(traj_pts) < 2:
                 pos = track.get("position") or {}
@@ -3407,4 +3711,4 @@ def update_track_positions(
             trace.y = [y_km]
             trace.z = [display_z]
         except Exception:
-            pass
+            continue

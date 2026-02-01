@@ -1197,8 +1197,10 @@ with tab6:
                     if "sensor_global_opacity" not in st.session_state:
                         st.session_state.sensor_global_opacity = None
                     
-                    with st.container():
-                        st.subheader("Radar Sensors")
+                    left_col, right_col = st.columns([1, 1])
+
+                    with left_col:
+                        st.markdown("### Radar Sensors")
                         show_surveillance = st.checkbox(
                             "Surveillance Radar",
                             value=st.session_state.sensor_show_surveillance,
@@ -1206,6 +1208,7 @@ with tab6:
                             help="Toggle Long-Range Surveillance Radar visualization"
                         )
                         st.session_state.sensor_show_surveillance = show_surveillance
+
                         show_fire_control = st.checkbox(
                             "Precision Tracking Radar",
                             value=st.session_state.sensor_show_fire_control,
@@ -1213,9 +1216,8 @@ with tab6:
                             help="Toggle Precision Tracking Radar visualization (ADVISORY ONLY)"
                         )
                         st.session_state.sensor_show_fire_control = show_fire_control
-                    
-                    with st.container():
-                        st.subheader("Passive Sensors")
+
+                        st.markdown("### Passive Sensors")
                         show_passive = st.checkbox(
                             "Passive / ESM Sensor",
                             value=st.session_state.sensor_show_passive,
@@ -1223,9 +1225,9 @@ with tab6:
                             help="Toggle Passive / ESM Sensor visualization"
                         )
                         st.session_state.sensor_show_passive = show_passive
-                    
-                    with st.container():
-                        st.subheader("Visual Aids")
+
+                    with right_col:
+                        st.markdown("### Visual Aids")
                         if "show_sensor_track_hints" not in st.session_state:
                             st.session_state["show_sensor_track_hints"] = True
                         show_sensor_hints = st.checkbox(
@@ -1277,6 +1279,26 @@ with tab6:
                         key="sim_time"
                     )
                     st.caption("Drag to scrub through the simulated timeline")
+
+                    # Track History Replay (Advisory)
+                    st.markdown("### Track History Replay (Advisory)")
+                    replay_enabled = st.checkbox(
+                        "Enable Track History Replay",
+                        value=False,
+                        help="Scrub through historical track positions (advisory only)"
+                    )
+
+                    if replay_enabled:
+                        replay_time = st.slider(
+                            "Replay Time (seconds)",
+                            min_value=0.0,
+                            max_value=float(st.session_state.get("max_history_time", 120.0)),
+                            value=0.0,
+                            step=1.0,
+                            help="Replay historical track states without affecting live simulation"
+                        )
+                    else:
+                        replay_time = None
                     
                     # Threat Density (visibility only; scenario-aware default)
                     current_scenario = str(st.session_state.get("selected_scenario", "civil_air_traffic") or "civil_air_traffic")
@@ -1330,7 +1352,36 @@ with tab6:
                     # Update marker positions only (no figure rebuild)
                     try:
                         from abhedya.dashboard.battlespace_3d import update_track_positions
-                        update_track_positions(fig_3d, data, float(st.session_state.get("sim_time", 0.0)))
+                        # Determine effective time: use replay_time when enabled, otherwise live sim_time
+                        effective_time = replay_time if (('replay_enabled' in locals() and replay_enabled) and (replay_time is not None)) else float(st.session_state.get("sim_time", 0.0))
+                        update_track_positions(fig_3d, data, float(effective_time))
+                    except Exception:
+                        pass
+                    # Persist per-track history in session state for audit/replay (read-only accumulation)
+                    try:
+                        if 'track_history' not in st.session_state:
+                            st.session_state['track_history'] = {}
+                        # Append current position for each track (do not modify track objects)
+                        current_sim = float(st.session_state.get('sim_time', 0.0))
+                        for t in (data or []):
+                            try:
+                                if not isinstance(t, dict):
+                                    continue
+                                tid = str(t.get('track_id', ''))
+                                pos = t.get('position') if isinstance(t.get('position'), dict) else {}
+                                px = float(pos.get('x', 0.0))
+                                py = float(pos.get('y', 0.0))
+                                pz = float(pos.get('z', 0.0))
+                                hist_list = st.session_state['track_history'].setdefault(tid, [])
+                                # Append only if last timestamp differs to avoid duplicate entries
+                                try:
+                                    last_t = hist_list[-1]['time'] if hist_list else None
+                                except Exception:
+                                    last_t = None
+                                if last_t is None or float(last_t) != float(current_sim):
+                                    hist_list.append({'time': current_sim, 'position': (px, py, pz)})
+                            except Exception:
+                                continue
                     except Exception:
                         pass
                     
