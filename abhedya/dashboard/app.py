@@ -1280,26 +1280,7 @@ with tab6:
                     )
                     st.caption("Drag to scrub through the simulated timeline")
 
-                    # Track History Replay (Advisory)
-                    st.markdown("### Track History Replay (Advisory)")
-                    replay_enabled = st.checkbox(
-                        "Enable Track History Replay",
-                        value=False,
-                        help="Scrub through historical track positions (advisory only)"
-                    )
-
-                    if replay_enabled:
-                        replay_time = st.slider(
-                            "Replay Time (seconds)",
-                            min_value=0.0,
-                            max_value=float(st.session_state.get("max_history_time", 120.0)),
-                            value=0.0,
-                            step=1.0,
-                            help="Replay historical track states without affecting live simulation"
-                        )
-                    else:
-                        replay_time = None
-                    
+                    # (Track History Replay removed) - Simulation Time is the only time control
                     # Threat Density (visibility only; scenario-aware default)
                     current_scenario = str(st.session_state.get("selected_scenario", "civil_air_traffic") or "civil_air_traffic")
                     show_density_default = bool(training_mode) or (current_scenario in ("drone_swarm", "saturation_test"))
@@ -1313,6 +1294,7 @@ with tab6:
                     )
                     st.caption("Threat Density (Advisory): Low = Blue, Medium = Yellow, High = Orange/Red.")
                     st.caption("Urgency Levels (TTC): LOW — >180 s | MEDIUM — 60–180 s | HIGH — <60 s")
+                    
                     
                     # Figure: create ONCE per scenario, reuse on slider/sensor change
                     active_scenario = str(st.session_state.get("active_scenario") or current_scenario)
@@ -1348,42 +1330,98 @@ with tab6:
                             st.warning(f"Battlespace visualization initialization warning: {str(e)}")
                     else:
                         fig_3d = st.session_state["battlespace_fig"]
-                    
-                    # Update marker positions only (no figure rebuild)
+                    # Ensure threat density persistent trace is created on initial figure creation
+                    if need_new_figure:
+                        try:
+                            found = False
+                            for tr in fig_3d.data:
+                                meta = getattr(tr, 'meta', None)
+                                if meta and meta.get('type') == 'threat_density':
+                                    found = True
+                                    break
+                                if getattr(tr, 'name', None) == 'Threat Density (Advisory)':
+                                    found = True
+                                    break
+                            if not found:
+                                import plotly.graph_objects as go
+                                density_trace = go.Scatter3d(
+                                    x=[], y=[], z=[],
+                                    mode='markers',
+                                    marker=dict(size=40, color='orange', opacity=0.25),
+                                    name='Threat Density (Advisory)',
+                                    showlegend=True,
+                                    hoverinfo='skip',
+                                    meta={'type': 'threat_density'}
+                                )
+                                fig_3d.add_trace(density_trace)
+                        except Exception:
+                            pass
+                    # Ensure figure preserves UI interactions across reruns
                     try:
-                        from abhedya.dashboard.battlespace_3d import update_track_positions
-                        # Determine effective time: use replay_time when enabled, otherwise live sim_time
-                        effective_time = replay_time if (('replay_enabled' in locals() and replay_enabled) and (replay_time is not None)) else float(st.session_state.get("sim_time", 0.0))
-                        update_track_positions(fig_3d, data, float(effective_time))
+                        fig_3d.update_layout(uirevision="BATTLESPACE_LOCK")
                     except Exception:
                         pass
-                    # Persist per-track history in session state for audit/replay (read-only accumulation)
+
+                    # Apply sensor toggles strictly as visibility-only changes.
                     try:
-                        if 'track_history' not in st.session_state:
-                            st.session_state['track_history'] = {}
-                        # Append current position for each track (do not modify track objects)
-                        current_sim = float(st.session_state.get('sim_time', 0.0))
-                        for t in (data or []):
+                        surveillance_on = sensor_layer_controls.get("show_surveillance", True) if isinstance(sensor_layer_controls, dict) else True
+                        tracking_on = sensor_layer_controls.get("show_fire_control", True) if isinstance(sensor_layer_controls, dict) else True
+                        esm_on = sensor_layer_controls.get("show_passive", True) if isinstance(sensor_layer_controls, dict) else True
+
+                        for tr in fig_3d.data:
                             try:
-                                if not isinstance(t, dict):
+                                meta = getattr(tr, 'meta', None)
+                                # HARD GUARD: Never touch track traces
+                                if meta and meta.get('type') == 'track':
                                     continue
-                                tid = str(t.get('track_id', ''))
-                                pos = t.get('position') if isinstance(t.get('position'), dict) else {}
-                                px = float(pos.get('x', 0.0))
-                                py = float(pos.get('y', 0.0))
-                                pz = float(pos.get('z', 0.0))
-                                hist_list = st.session_state['track_history'].setdefault(tid, [])
-                                # Append only if last timestamp differs to avoid duplicate entries
-                                try:
-                                    last_t = hist_list[-1]['time'] if hist_list else None
-                                except Exception:
-                                    last_t = None
-                                if last_t is None or float(last_t) != float(current_sim):
-                                    hist_list.append({'time': current_sim, 'position': (px, py, pz)})
+
+                                # If meta indicates a sensor, toggle by sensor_type
+                                if meta and meta.get('is_sensor'):
+                                    stype = str(meta.get('sensor_type', '')).upper()
+                                    if 'LONG_RANGE' in stype or 'SURVEILLANCE' in stype:
+                                        tr.visible = surveillance_on
+                                    elif 'FIRE' in stype or 'TRACK' in stype:
+                                        tr.visible = tracking_on
+                                    elif 'PASSIVE' in stype or 'ESM' in stype:
+                                        tr.visible = esm_on
+                                    else:
+                                        # Leave unknown sensor-like traces alone
+                                        pass
+                                    continue
+
+                                # Fallback: minimal name-based sensor matching (do not touch tracks)
+                                name = getattr(tr, 'name', '') or ''
+                                if 'Surveillance' in name:
+                                    tr.visible = surveillance_on
+                                elif 'Passive' in name or 'ESM' in name:
+                                    tr.visible = esm_on
+                                elif 'Precision' in name or 'Fire' in name or 'Tracking' in name:
+                                    tr.visible = tracking_on
                             except Exception:
                                 continue
                     except Exception:
                         pass
+
+                    # FINAL SAFETY ASSERT (non-breaking)
+                    try:
+                        ok = any((getattr(t, 'meta', None) and t.meta.get('type') == 'track') for t in fig_3d.data)
+                        if not ok:
+                            try:
+                                st.warning('Track traces missing — this must never happen')
+                            except Exception:
+                                pass
+                    except Exception:
+                        pass
+                    
+                    # Update marker positions only (no figure rebuild)
+                    try:
+                        from abhedya.dashboard.battlespace_3d import update_track_positions
+                        # Determine effective time: use live simulation time only
+                        effective_time = float(st.session_state.get("sim_time", 0.0))
+                        update_track_positions(fig_3d, data, float(effective_time))
+                    except Exception:
+                        pass
+                    # Note: Track history / replay feature removed. No per-track history persisted in session_state.
                     
                     # Threat Density layer (visual only; add or update trace, never recreate figure)
                     try:
@@ -1394,6 +1432,7 @@ with tab6:
                         xs = [p[0] for p in density_points]
                         ys = [p[1] for p in density_points]
                         zs = [p[2] for p in density_points]
+                        # Only update existing density trace. Do NOT add new traces after figure init.
                         density_trace = None
                         for tr in fig_3d.data:
                             if getattr(tr, "name", None) == "Threat Density (Advisory)":
@@ -1405,18 +1444,8 @@ with tab6:
                             density_trace.z = zs
                             density_trace.visible = show_threat_density
                         else:
-                            density_trace = go.Scatter3d(
-                                x=xs,
-                                y=ys,
-                                z=zs,
-                                mode="markers",
-                                marker=dict(size=30, color="orange", opacity=0.12),
-                                name="Threat Density (Advisory)",
-                                hoverinfo="skip",
-                                showlegend=True,
-                            )
-                            density_trace.visible = show_threat_density
-                            fig_3d.add_trace(density_trace)
+                            # Do not create density trace here; it must be created during figure initialization
+                            pass
                         # Saturation cluster hint: soft halo ring at centroid when dense (visual only)
                         halo_trace = None
                         for tr in fig_3d.data:
@@ -1440,18 +1469,8 @@ with tab6:
                                 halo_trace.z = halo_z
                                 halo_trace.visible = show_halo
                             else:
-                                halo_trace_new = go.Scatter3d(
-                                    x=halo_x,
-                                    y=halo_y,
-                                    z=halo_z,
-                                    mode="lines",
-                                    line=dict(color="rgba(255,165,0,0.25)", width=2, dash="dash"),
-                                    name="Density Halo (Advisory)",
-                                    hoverinfo="skip",
-                                    showlegend=False,
-                                )
-                                halo_trace_new.visible = show_halo
-                                fig_3d.add_trace(halo_trace_new)
+                                # Do not create halo trace after init; skip to preserve persistent figure
+                                pass
                         elif halo_trace is not None:
                             halo_trace.visible = False
                     except Exception:
@@ -1519,7 +1538,49 @@ with tab6:
                             st.info("ℹ️ Sensor information unavailable — Monitoring Only")
                     except Exception:
                         pass  # Fail silently - sensor panel is non-critical
-                    
+
+                    # --- Multi-Sensor Fusion Breakdown (Advisory) ---
+                    # MUST render immediately after Sensor Coverage Legend (display-only)
+                    def get_synthetic_fusion(track_id: str):
+                        base = abs(hash(track_id)) % 100
+                        surv = 45 + (base % 10)
+                        track_v = 25 + ((base // 2) % 10)
+                        esm = 100 - surv - track_v
+                        return {
+                            "Surveillance Radar": int(surv),
+                            "Precision Tracking Radar": int(track_v),
+                            "Passive RF / ESM": int(esm)
+                        }
+
+                    # Select track id (use synthetic CIV_001 when none selected)
+                    if isinstance(selected_track, dict):
+                        fusion_track_id = str(selected_track.get("track_id", "CIV_001"))
+                        classification = selected_track.get('object_type', 'UNKNOWN')
+                    else:
+                        fusion_track_id = "CIV_001"
+                        classification = "FRIENDLY"
+
+                    fusion = get_synthetic_fusion(fusion_track_id)
+
+                    # Render UI exactly as specified (unconditional)
+                    st.subheader("Multi-Sensor Fusion Breakdown (Advisory)")
+                    st.caption("Advisory-only. Synthetic training data.")
+                    st.write(f"Track: {fusion_track_id} | Classification: {classification}")
+
+                    # Render contribution bars with percent text; values sum to 100
+                    for sensor_name, value in fusion.items():
+                        pct = int(value)
+                        cols = st.columns([3, 4, 1])
+                        with cols[0]:
+                            st.write(sensor_name)
+                        with cols[1]:
+                            st.progress(pct)
+                        with cols[2]:
+                            st.write(f"{pct}%")
+
+                    st.markdown("**Fusion Quality:**")
+                    st.write("• EW Degradation: None")
+                    st.write("• Confidence Trend: Stable")
                 elif viz_mode == "Engagement Sequence" and EngagementVisualization:
                     # Engagement Sequence Visualization
                     # Calculate interception feasibility if available

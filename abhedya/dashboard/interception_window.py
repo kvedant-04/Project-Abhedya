@@ -83,7 +83,8 @@ class InterceptionWindowVisualization:
                 mode='markers',
                 marker=dict(size=15, color='#4A90E2', symbol='diamond', line=dict(width=2, color='white')),
                 name='Defender Position',
-                hovertemplate='<b>Defender</b><br>Position: (%{x:.0f}, %{y:.0f}, %{z:.0f}) m<extra></extra>',
+                hovertemplate=None,
+                hoverinfo='skip',
                 showlegend=True
             ))
             
@@ -95,7 +96,8 @@ class InterceptionWindowVisualization:
                 mode='markers',
                 marker=dict(size=12, color='#FF7875', symbol='circle', line=dict(width=2, color='white')),
                 name='Target Position',
-                hovertemplate='<b>Target</b><br>Position: (%{x:.0f}, %{y:.0f}, %{z:.0f}) m<extra></extra>',
+                hovertemplate=None,
+                hoverinfo='skip',
                 showlegend=True
             ))
             
@@ -107,7 +109,8 @@ class InterceptionWindowVisualization:
                 mode='lines',
                 line=dict(color='rgba(255, 255, 255, 0.3)', width=2, dash='dot'),
                 name='Line of Sight',
-                hovertemplate='<b>Line of Sight</b><extra></extra>',
+                hovertemplate=None,
+                hoverinfo='skip',
                 showlegend=True
             ))
             
@@ -204,7 +207,8 @@ class InterceptionWindowVisualization:
                 opacity=0.2,
                 color=color,
                 name=f'Feasibility Envelope ({feasibility_level})',
-                hovertemplate=f'<b>Feasibility Envelope</b><br>Level: {feasibility_level}<br>ADVISORY ONLY - Mathematical assessment<extra></extra>',
+                hovertemplate=None,
+                hoverinfo='skip',
                 showlegend=True
             ))
         except Exception:

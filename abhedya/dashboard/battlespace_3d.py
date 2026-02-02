@@ -1892,45 +1892,7 @@ class Battlespace3D:
                 # Append kill chain stage into customdata for hover (index 10)
                 kcs_val = str(track.get('kill_chain_stage', 'DETECTED'))
 
-                # History summary for hover: First seen, Last seen, Count
-                try:
-                    hist = track.get('history') if isinstance(track.get('history'), list) else []
-                    if hist and len(hist) > 0:
-                        first_seen = float(hist[0].get('t', 0.0))
-                        last_seen = float(hist[-1].get('t', first_seen))
-                        hist_count = len(hist)
-                    else:
-                        first_seen = None
-                        last_seen = None
-                        hist_count = 0
-                except Exception:
-                    first_seen = None
-                    last_seen = None
-                    hist_count = 0
-
-                # Synthetic backfill for missing history: avoid N/A or zero values
-                try:
-                    # Always synthesize missing values to avoid N/A displays
-                    if first_seen is None:
-                        # Use a short positive offset for first-seen in synthesized cases
-                        first_seen_display = "T+5s"
-                    else:
-                        first_seen_display = f"T+{int(first_seen)}s"
-
-                    if last_seen is None:
-                        last_seen_display = f"T+{int(sim_time)}s"
-                    else:
-                        last_seen_display = f"T+{int(last_seen)}s"
-
-                    if hist_count == 0:
-                        hist_count_display = max(1, int(sim_time) if isinstance(sim_time, (int, float)) and sim_time > 0 else 1)
-                    else:
-                        hist_count_display = hist_count
-                except Exception:
-                    first_seen_display = "T+5s"
-                    last_seen_display = f"T+{int(sim_time) if isinstance(sim_time, (int, float)) else 1}s"
-                    hist_count_display = max(1, hist_count)
-
+                # Build hover customdata without history fields (history removed)
                 customdata_point = [
                     track_id,
                     classification_enum,
@@ -1942,13 +1904,10 @@ class Battlespace3D:
                     detected_by_str,
                     ttc_display,
                     urgency_display,
-                    kcs_val,
-                    first_seen_display,
-                    last_seen_display,
-                    hist_count_display
+                    kcs_val
                 ]
 
-                # Hovertemplate — include Kill Chain Stage and history summary
+                # Hovertemplate — only allowed fields (history fields removed)
                 hovertemplate = (
                     "Track ID: %{customdata[0]}<br>"
                     "Classification: %{customdata[1]}<br>"
@@ -1960,10 +1919,7 @@ class Battlespace3D:
                     "Detected By: %{customdata[7]}<br>"
                     "Time to Criticality: %{customdata[8]}<br>"
                     "Urgency Level: %{customdata[9]}<br>"
-                    "Kill Chain Stage: %{customdata[10]}<br>"
-                    "First Seen At: %{customdata[11]}<br>"
-                    "Last Seen At: %{customdata[12]}<br>"
-                    "History Points: %{customdata[13]}<extra></extra>"
+                    "Kill Chain Stage: %{customdata[10]}<extra></extra>"
                 )
                 
                 # Interpolate marker position along precomputed trajectory at `sim_time` if available.
@@ -2097,7 +2053,8 @@ class Battlespace3D:
                     hovertemplate=hovertemplate,
                     hoverinfo='text',
                     hoverlabel=dict(namelength=-1),
-                    showlegend=show_track_legend
+                    showlegend=show_track_legend,
+                    meta={'type': 'track'}
                 ))
                 # Defer creation of an invisible buffer trace until after all visible markers
                 try:
@@ -2121,7 +2078,8 @@ class Battlespace3D:
                         mode='markers',
                         marker=dict(size=6, color=badge_color, symbol='circle'),
                         showlegend=False,
-                        hoverinfo='skip'
+                        hoverinfo='skip',
+                        meta={'type': 'track'}
                     ))
                 except Exception:
                     pass
@@ -2141,7 +2099,8 @@ class Battlespace3D:
                             hovertemplate=bhover,
                             hoverinfo='text',
                             hoverlabel=dict(namelength=-1),
-                            showlegend=False
+                            showlegend=False,
+                            meta={'type': 'track'}
                         ))
                     except Exception:
                         pass
@@ -2265,7 +2224,7 @@ class Battlespace3D:
                     lighting=dict(ambient=0.45, diffuse=0.5, specular=0.1, roughness=0.9),
                     showlegend=True,
                     name="Atmospheric Layer (Advisory)",
-                    hovertemplate='<b>Atmospheric Layer</b><br>Advisory Only - Visual representation<extra></extra>',
+                    hovertemplate=None,
                     hoverinfo='skip'
                 ))
 
@@ -2340,7 +2299,7 @@ class Battlespace3D:
                     opacity=weather_opacity,
                     showlegend=True,
                     name="Weather Volume (Advisory)",
-                    hovertemplate='<b>Weather Volume</b><br>Advisory Only - Visual representation<extra></extra>',
+                    hovertemplate=None,
                     hoverinfo='skip'
                 ))
         except Exception:
@@ -2395,7 +2354,7 @@ class Battlespace3D:
                     line=dict(color=color, width=3),
                     name=f"Interception Window ({feasibility})",
                     showlegend=True,
-                    hovertemplate=f'<b>Interception Feasibility</b><br>Level: {feasibility}<br>ADVISORY ONLY - Mathematical assessment<extra></extra>',
+                    hovertemplate=None,
                     hoverinfo='skip'
                 ))
         except Exception:
@@ -2648,7 +2607,9 @@ class Battlespace3D:
                     legendgroup='sensors',
                     showlegend=show_legend_now,
                     customdata=[sensor_custom],
-                    hovertemplate=sensor_hovertemplate
+                    hovertemplate=None,
+                    hoverinfo='skip',
+                    meta={'is_sensor': True, 'sensor_type': getattr(metadata.sensor_type, 'name', sensor_type_label)}
                 ))
                 if show_legend_now:
                     sensor_type_shown['Surveillance Sensors'] = True
@@ -2700,39 +2661,42 @@ class Battlespace3D:
                 if metadata.sensor_type == SensorType.LONG_RANGE_SURVEILLANCE:
                     # Green translucent dome (omnidirectional)
                     Battlespace3D._render_coverage_dome(
-                        fig, pos_x_km, pos_y_km, pos_z,
-                        geometry.coverage_range_km,
-                        geometry.coverage_altitude_ceiling_m,
-                        (coverage_color if coverage_color else '#22C55E'),
-                        hover_text,
-                        opacity=final_opacity
-                    )
+                            fig, pos_x_km, pos_y_km, pos_z,
+                            geometry.coverage_range_km,
+                            geometry.coverage_altitude_ceiling_m,
+                            (coverage_color if coverage_color else '#22C55E'),
+                            hover_text,
+                            opacity=final_opacity,
+                            sensor_type=getattr(metadata.sensor_type, 'name', 'LONG_RANGE_SURVEILLANCE')
+                        )
                 
                 elif metadata.sensor_type == SensorType.FIRE_CONTROL:
                     # Blue focused cone (directional)
                     Battlespace3D._render_coverage_cone(
-                        fig, pos_x_km, pos_y_km, pos_z,
-                        geometry.coverage_range_km,
-                        geometry.coverage_altitude_ceiling_m,
-                        geometry.beam_width_deg,
-                        geometry.beam_elevation_deg,
-                        (coverage_color if coverage_color else '#3B82F6'),
-                        hover_text,
-                        opacity=final_opacity
-                    )
+                            fig, pos_x_km, pos_y_km, pos_z,
+                            geometry.coverage_range_km,
+                            geometry.coverage_altitude_ceiling_m,
+                            geometry.beam_width_deg,
+                            geometry.beam_elevation_deg,
+                            (coverage_color if coverage_color else '#3B82F6'),
+                            hover_text,
+                            opacity=final_opacity,
+                            sensor_type=getattr(metadata.sensor_type, 'name', 'FIRE_CONTROL')
+                        )
                 
                 elif metadata.sensor_type == SensorType.PASSIVE_ESM:
                     # Purple dashed arc (directional, passive)
                     Battlespace3D._render_coverage_arc(
-                        fig, pos_x_km, pos_y_km, pos_z,
-                        geometry.coverage_range_km,
-                        geometry.coverage_altitude_ceiling_m,
-                        geometry.beam_width_deg,
-                        geometry.beam_elevation_deg,
-                        (coverage_color if coverage_color else '#8B5CF6'),
-                        hover_text,
-                        opacity=final_opacity
-                    )
+                            fig, pos_x_km, pos_y_km, pos_z,
+                            geometry.coverage_range_km,
+                            geometry.coverage_altitude_ceiling_m,
+                            geometry.beam_width_deg,
+                            geometry.beam_elevation_deg,
+                            (coverage_color if coverage_color else '#8B5CF6'),
+                            hover_text,
+                            opacity=final_opacity,
+                            sensor_type=getattr(metadata.sensor_type, 'name', 'PASSIVE_ESM')
+                        )
         except Exception:
             # Fallback to legacy implementation if sensor_models unavailable
             try:
@@ -2750,7 +2714,8 @@ class Battlespace3D:
         altitude_ceiling_m: float,
         color: str,
         hover_text: str,
-        opacity: float = 0.22
+        opacity: float = 0.22,
+        sensor_type: str = 'LONG_RANGE_SURVEILLANCE'
     ):
         """
         Render omnidirectional coverage dome (for Surveillance Radar).
@@ -2789,7 +2754,8 @@ class Battlespace3D:
                 lighting=dict(ambient=0.6, diffuse=0.6, specular=0.2, roughness=0.9),
                 showlegend=False,
                 hovertemplate=None,
-                hoverinfo='skip'
+                hoverinfo='skip',
+                meta={'is_sensor': True, 'sensor_type': sensor_type}
             ))
         except Exception:
             pass  # Fail silently
@@ -2806,7 +2772,8 @@ class Battlespace3D:
         beam_elevation_deg: float,
         color: str,
         hover_text: str,
-        opacity: float = 0.24
+        opacity: float = 0.24,
+        sensor_type: str = 'FIRE_CONTROL'
     ):
         """
         Render directional coverage cone (for Precision Tracking Radar).
@@ -2860,7 +2827,8 @@ class Battlespace3D:
                 lighting=dict(ambient=0.6, diffuse=0.65, specular=0.2, roughness=0.8),
                 showlegend=False,
                 hovertemplate=None,
-                hoverinfo='skip'
+                hoverinfo='skip',
+                meta={'is_sensor': True, 'sensor_type': sensor_type}
             ))
         except Exception:
             pass  # Fail silently
@@ -2877,7 +2845,8 @@ class Battlespace3D:
         beam_elevation_deg: float,
         color: str,
         hover_text: str,
-        opacity: float = 0.18
+        opacity: float = 0.18,
+        sensor_type: str = 'PASSIVE_ESM'
     ):
         """
         Render directional coverage arc (for Passive / ESM Sensor).
@@ -2946,7 +2915,8 @@ class Battlespace3D:
                 name="Passive Sensor Arc",
                 showlegend=False,
                 hovertemplate=None,
-                hoverinfo='skip'
+                hoverinfo='skip',
+                meta={'is_sensor': True, 'sensor_type': sensor_type}
             ))
             
             # Add semi-transparent arc fill with subtle lighting for depth
@@ -2960,7 +2930,8 @@ class Battlespace3D:
                     lighting=dict(ambient=0.55, diffuse=0.6, specular=0.15, roughness=0.9),
                     showlegend=False,
                     hovertemplate=None,
-                    hoverinfo='skip'
+                    hoverinfo='skip',
+                    meta={'is_sensor': True, 'sensor_type': sensor_type}
                 ))
         except Exception:
             pass  # Fail silently
@@ -3345,12 +3316,7 @@ class Battlespace3D:
                             ),
                             name=f"{metadata.name} → Track",
                             showlegend=False,
-                            hovertemplate=(
-                                f"<b>Coverage Hint</b><br>"
-                                f"Track lies within sensor coverage volume<br>"
-                                f"No detection or engagement implied<br>"
-                                f"<br>Advisory Only — Visualization"
-                            ) + '<extra></extra>',
+                            hovertemplate=None,
                             hoverinfo='skip'
                         ))
         except Exception:
@@ -3587,12 +3553,6 @@ def update_track_positions(
     if fig is None or not hasattr(fig, "data") or not isinstance(tracks, list):
         return
     sim_time = float(sim_time)
-    # Determine replay_time if provided, otherwise check session state
-    try:
-        if replay_time is None:
-            replay_time = float(st.session_state.get('replay_time')) if (st is not None and 'replay_time' in st.session_state) else None
-    except Exception:
-        replay_time = None
     track_by_id = {str(t.get("track_id", "")): t for t in tracks if isinstance(t, dict) and t.get("track_id") is not None}
     prediction_seconds = 90.0
     num_points = 40
@@ -3600,91 +3560,29 @@ def update_track_positions(
     for trace in fig.data:
         try:
             name = getattr(trace, "name", None)
-            if not name or not str(name).startswith("Track_"):
+            meta = getattr(trace, 'meta', None)
+            # Identify track traces by meta or by naming convention
+            is_track = False
+            if meta and meta.get('type') == 'track':
+                is_track = True
+            elif name and str(name).startswith("Track_"):
+                is_track = True
+            if not is_track:
                 continue
-            track_id = str(name)[6:]
+
+            # Resolve track id
+            track_id = None
+            if meta and meta.get('track_id'):
+                track_id = str(meta.get('track_id'))
+            elif name and str(name).startswith("Track_"):
+                track_id = str(name)[6:]
+            if not track_id:
+                continue
+
             track = track_by_id.get(track_id)
             if not track:
                 continue
-            traj_pts = Battlespace3D._get_or_create_trajectory(track, prediction_seconds=prediction_seconds, num_points=num_points)
-            if not traj_pts or len(traj_pts) < 2:
-                pos = track.get("position") or {}
-                x = float(pos.get("x", 0.0)) / 1000.0
-                y = float(pos.get("y", 0.0)) / 1000.0
-                z = float(pos.get("z", 1.0))
-                try:
-                    trace.y = [y]
-                    trace.z = [z]
-                except Exception:
-                    pass
-                continue
-            npts = len(traj_pts)
-            dt = float(max_t) / max(1, npts - 1)
-            t = max(0.0, min(sim_time, max_t))
-            idx_low = int(min(npts - 2, max(0, int(math.floor(t / dt)))))
-            # Replay behavior: if replay_time is set and earlier than sim_time, attempt to use history
-            used_replay = False
-            try:
-                time_to_use = replay_time if (isinstance(replay_time, (int, float)) and replay_time < sim_time) else sim_time
-                history_source = None
-                # Prefer global session storage if available
-                try:
-                    if st is not None and 'track_history' in st.session_state:
-                        hist_store = st.session_state.get('track_history', {})
-                        if isinstance(hist_store, dict) and track_id in hist_store:
-                            history_source = hist_store.get(track_id)
-                except Exception:
-                    history_source = None
 
-                # Fallback to track['history'] if session store not present
-                if history_source is None:
-                    hs = track.get('history') if isinstance(track.get('history'), list) else None
-                    history_source = hs
-
-                # Normalize history entries to structure with 'time' and 'position' keys or 't','x','y','z'
-                if history_source and isinstance(history_source, list) and time_to_use is not None and time_to_use < sim_time:
-                    # Find last point with time <= time_to_use
-                    sel = None
-                    for h in history_source:
-                        try:
-                            tval = None
-                            if isinstance(h, dict) and 'time' in h:
-                                tval = float(h.get('time', h.get('t', 0.0)))
-                            elif isinstance(h, dict) and 't' in h:
-                                tval = float(h.get('t', 0.0))
-                            if tval is not None and tval <= float(time_to_use):
-                                sel = h
-                        except Exception:
-                            continue
-                    if sel is None and len(history_source) > 0:
-                        sel = history_source[0]
-                    if sel is not None:
-                        try:
-                            if 'position' in sel and isinstance(sel.get('position'), (list, tuple)):
-                                px, py, pz = sel.get('position')
-                            elif 'position' in sel and isinstance(sel.get('position'), dict):
-                                posd = sel.get('position')
-                                px = float(posd.get('x', posd.get('lon', 0.0)))
-                                py = float(posd.get('y', posd.get('lat', 0.0)))
-                                pz = float(posd.get('z', sel.get('z', 1.0)))
-                            else:
-                                px = float(sel.get('x', sel.get('px', track.get('position', {}).get('x', 0.0))))
-                                py = float(sel.get('y', sel.get('py', track.get('position', {}).get('y', 0.0))))
-                                pz = float(sel.get('z', sel.get('pz', track.get('position', {}).get('z', 1.0))))
-                            trace.x = [px / 1000.0]
-                            trace.y = [py / 1000.0]
-                            trace.z = [pz if pz and pz > 1.0 else 1.0]
-                            used_replay = True
-                        except Exception:
-                            used_replay = False
-
-            except Exception:
-                used_replay = False
-
-            if used_replay:
-                continue
-
-            # Normal live update (trajectory interpolation or direct position)
             traj_pts = Battlespace3D._get_or_create_trajectory(track, prediction_seconds=prediction_seconds, num_points=num_points)
             if not traj_pts or len(traj_pts) < 2:
                 pos = track.get("position") or {}
@@ -3695,6 +3593,7 @@ def update_track_positions(
                 trace.y = [y]
                 trace.z = [z]
                 continue
+
             npts = len(traj_pts)
             dt = float(max_t) / max(1, npts - 1)
             t = max(0.0, min(sim_time, max_t))

@@ -311,7 +311,7 @@ class TrajectoryVisualization:
                 line=dict(color='rgba(250, 173, 20, 0.4)', width=1),
                 name='Prediction Cone',
                 showlegend=False,
-                hovertemplate='<b>Predicted Trajectory Cone</b><br>Advisory Only - No weapon logic<extra></extra>',
+                hovertemplate=None,
                 hoverinfo='skip'
             ))
         except Exception:

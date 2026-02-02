@@ -140,6 +140,92 @@ class SeverityThemeController:
             # Fail silently - don't crash dashboard
             pass
 
+    @staticmethod
+    def render_fusion_breakdown(track: Optional[Dict[str, Any]], training_mode: bool = False):
+        """
+        Render the 'Multi-Sensor Fusion Breakdown (Advisory)' panel.
+
+        STRICTLY VISUAL ONLY - does not modify track state or perform fusion.
+        - Reads `track.get('fusion')` or `track.get('sensor_contributions')` if available.
+        - If missing, generates a deterministic, synthetic advisory distribution that sums to 1.0.
+        - Renders horizontal bars with fixed colors (no animations, no computations that affect state).
+        """
+        try:
+            st.subheader("Multi-Sensor Fusion Breakdown (Advisory)")
+            st.caption("Advisory-only visualization of sensor contribution")
+
+            # Placeholder when no track selected
+            if not isinstance(track, dict):
+                st.info("Select or hover a track to view sensor fusion breakdown.")
+                return
+
+            # Prefer explicit 'fusion' key, fallback to older 'sensor_contributions'
+            fusion_src = track.get("fusion") or track.get("sensor_contributions") or {}
+
+            # If missing or empty, produce a deterministic synthetic advisory distribution
+            if not isinstance(fusion_src, dict) or not fusion_src:
+                # Deterministic synthetic distribution (training-friendly)
+                fusion_src = {
+                    "Surveillance Radar": 0.45,
+                    "Precision Tracking Radar": 0.35,
+                    "Passive / ESM": 0.20
+                }
+
+            # Normalize values for display only (do not write back to track)
+            try:
+                items = [(k, float(v)) for k, v in fusion_src.items()]
+            except Exception:
+                items = [ ("Surveillance Radar", 0.45), ("Precision Tracking Radar", 0.35), ("Passive / ESM", 0.20) ]
+
+            total = sum(v for _, v in items) or 1.0
+            normalized = [(k, max(0.0, float(v) / total)) for k, v in items]
+
+            # Colors mandated by design
+            color_map = {
+                "Surveillance Radar": "#1890FF",  # Blue
+                "Precision Tracking Radar": "#52C41A",  # Green
+                "Passive / ESM": "#722ED1"  # Purple
+            }
+
+            names = [k for k, _ in normalized]
+            values = [v * 100.0 for _, v in normalized]
+            colors = [color_map.get(n, "#999999") for n in names]
+
+            # Render a simple horizontal bar chart (static, advisory-only)
+            fig = go.Figure()
+            fig.add_trace(go.Bar(
+                x=values,
+                y=names,
+                orientation='h',
+                marker=dict(color=colors),
+                text=[f"{int(round(val))}%" for val in values],
+                textposition='outside',
+                hoverinfo='skip',
+                showlegend=False
+            ))
+            fig.update_layout(
+                height=40 * max(1, len(names)) + 40,
+                margin=dict(l=4, r=8, t=6, b=6),
+                xaxis=dict(range=[0, 100], showticklabels=False),
+                yaxis=dict(autorange='reversed')
+            )
+
+            st.plotly_chart(fig, use_container_width=True, config=PLOTLY_CONFIG)
+
+            # Fusion Quality (visual-only)
+            quality = track.get("fusion_quality") or {}
+            ew_degraded = quality.get("ew_degraded") if isinstance(quality, dict) else False
+            confidence_trend = quality.get("confidence_trend") if isinstance(quality, dict) and "confidence_trend" in quality else "Stable"
+
+            st.markdown("**Fusion Quality:**")
+            st.write(f"• EW Degradation: {'Yes' if ew_degraded else 'None'}")
+            st.write(f"• Confidence Trend: {confidence_trend}")
+
+        except Exception:
+            # Fail silently and non-intrusively — do not change state or raise
+            st.info("Select or hover a track to view sensor fusion breakdown.")
+            return
+
 
 class AirspaceVisualization:
     """

@@ -331,7 +331,8 @@ class TrajectoryTracker:
                 mode='lines',
                 line=dict(color='rgba(74, 144, 226, 0.4)', width=3),
                 name='Trajectory History',
-                hovertemplate='<b>Trajectory History</b><extra></extra>',
+                hovertemplate=None,
+                hoverinfo='skip',
                 showlegend=True
             ))
         except Exception:
@@ -370,7 +371,8 @@ class TrajectoryTracker:
                 mode='lines',
                 line=dict(color='rgba(250, 173, 20, 0.6)', width=3, dash='dash'),
                 name='Predicted Trajectory',
-                hovertemplate='<b>Predicted Trajectory</b><br>Time: %{customdata:.1f}s ahead<extra></extra>',
+                hovertemplate=None,
+                hoverinfo='skip',
                 customdata=times,
                 showlegend=True
             ))

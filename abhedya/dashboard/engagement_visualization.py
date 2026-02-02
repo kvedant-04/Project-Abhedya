@@ -100,7 +100,8 @@ class EngagementVisualization:
                 line=dict(color='#FF7875', width=4),
                 marker=dict(size=4, color='#FF7875'),
                 name='Target Trajectory (Simulated)',
-                hovertemplate='<b>Target</b><br>Time: %{customdata:.1f}s<br>Position: (%{x:.0f}, %{y:.0f}, %{z:.0f}) m<extra></extra>',
+                hovertemplate=None,
+                hoverinfo='skip',
                 customdata=times,
                 showlegend=True
             ))
@@ -120,7 +121,8 @@ class EngagementVisualization:
                 mode='markers',
                 marker=dict(size=15, color='#4A90E2', symbol='diamond', line=dict(width=2, color='white')),
                 name='Defender Position',
-                hovertemplate='<b>Defender</b><br>Position: (%{x:.0f}, %{y:.0f}, %{z:.0f}) m<extra></extra>',
+                hovertemplate=None,
+                hoverinfo='skip',
                 showlegend=True
             ))
             
