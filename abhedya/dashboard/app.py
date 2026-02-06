@@ -19,6 +19,8 @@ import math
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 
+from abhedya.dashboard.radar_ppi import render_airspace_radar_ppi
+
 # -------------------------------------------------------------------
 # Streamlit Page Config (MUST be first Streamlit call)
 # -------------------------------------------------------------------
@@ -582,129 +584,21 @@ with tab1:
             except Exception:
                 pass
 
-        fig = AirspaceVisualization.create_2d_visualization(
+            # maintain radar sweep angle in session state and increment per rerun
+            if 'radar_sweep_angle_deg' not in st.session_state:
+                st.session_state.radar_sweep_angle_deg = 0.0
+            # small incremental step per rerun for smooth rotation
+            st.session_state.radar_sweep_angle_deg = (st.session_state.radar_sweep_angle_deg + 5.0) % 360.0
+
+        # Render single Airspace Radar PPI and remove old 2D placeholder
+        st.subheader("Airspace Overview — Radar PPI (Advisory)")
+        ppi_fig = render_airspace_radar_ppi(
             data,
-            training_mode=training_mode,
-            current_time=current_time if training_mode else None,
-            show_confidence_rings=show_confidence_rings,
-            show_protected_zones=show_protected_zones,
-            atmospheric_conditions=atmospheric_conditions
+            training_mode,
+            sweep_angle_deg=st.session_state.get('radar_sweep_angle_deg', 0.0),
+            scenario=st.session_state.get('selected_scenario', None)
         )
-        
-        # Render chart with CSS-based radar sweep overlay (Training Mode only)
-        if training_mode:
-            # Create wrapper div for relative positioning
-            st.markdown('<div id="radar-chart-wrapper" style="position: relative; width: 100%;">', unsafe_allow_html=True)
-            
-            # Render static Plotly chart with all controls enabled
-            st.plotly_chart(
-                fig,
-                use_container_width=True,
-                height=700,
-                key="airspace_chart_training",
-                config={
-                    'displayModeBar': True,  # Restore all Plotly controls
-                    'displaylogo': False,
-                    'responsive': True,
-                    'scrollZoom': True,
-                    'modeBarButtonsToAdd': ['pan2d', 'zoom2d', 'select2d', 'lasso2d', 'resetScale2d'],
-                    'staticPlot': False,
-                }
-            )
-            
-            # Add CSS-based continuous radar sweep overlay (positioned absolutely over chart)
-            st.markdown("""
-            <style>
-            @keyframes radarSweep {
-                from { transform: rotate(0deg); }
-                to { transform: rotate(360deg); }
-            }
-            
-            #radar-sweep-overlay {
-                position: absolute;
-                top: 0;
-                left: 0;
-                width: 100%;
-                height: 100%;
-                pointer-events: none;
-                z-index: 1000;
-                overflow: hidden;
-            }
-            
-            #radar-sweep-line {
-                position: absolute;
-                top: 50%;
-                left: 50%;
-                width: 2px;
-                height: 50%;
-                background: linear-gradient(to bottom, 
-                    rgba(74, 144, 226, 0.18) 0%,
-                    rgba(74, 144, 226, 0.12) 50%,
-                    rgba(74, 144, 226, 0.04) 100%);
-                transform-origin: 0 0;
-                animation: radarSweep 7s linear infinite;
-                box-shadow: 0 0 6px rgba(74, 144, 226, 0.25);
-            }
-            
-            #radar-sweep-glow {
-                position: absolute;
-                top: 50%;
-                left: 50%;
-                width: 3px;
-                height: 42%;
-                background: linear-gradient(to bottom,
-                    rgba(74, 144, 226, 0.06) 0%,
-                    rgba(74, 144, 226, 0.02) 100%);
-                transform-origin: 0 0;
-                animation: radarSweep 7s linear infinite;
-                animation-delay: -0.08s;
-            }
-            </style>
-            <div id="radar-sweep-overlay">
-                <div id="radar-sweep-line"></div>
-                <div id="radar-sweep-glow"></div>
-            </div>
-            <script>
-            (function() {
-                function positionRadarOverlay() {
-                    var wrapper = document.getElementById('radar-chart-wrapper');
-                    var chart = wrapper ? wrapper.querySelector('[data-testid="stPlotlyChart"]') : null;
-                    var overlay = document.getElementById('radar-sweep-overlay');
-                    
-                    if (chart && overlay && wrapper) {
-                        var chartRect = chart.getBoundingClientRect();
-                        var wrapperRect = wrapper.getBoundingClientRect();
-                        
-                        overlay.style.position = 'absolute';
-                        overlay.style.top = (chartRect.top - wrapperRect.top) + 'px';
-                        overlay.style.left = (chartRect.left - wrapperRect.left) + 'px';
-                        overlay.style.width = chartRect.width + 'px';
-                        overlay.style.height = chartRect.height + 'px';
-                    }
-                }
-                
-                // Position overlay after chart loads
-                setTimeout(positionRadarOverlay, 200);
-                setTimeout(positionRadarOverlay, 800);
-                window.addEventListener('resize', positionRadarOverlay);
-                
-                // Also watch for Plotly redraws
-                if (window.Plotly) {
-                    var originalRelayout = Plotly.relayout;
-                    Plotly.relayout = function() {
-                        var result = originalRelayout.apply(this, arguments);
-                        setTimeout(positionRadarOverlay, 100);
-                        return result;
-                    };
-                }
-            })();
-            </script>
-            """, unsafe_allow_html=True)
-            
-            # closing wrapper handled in the script block; avoid stray HTML artifact
-        else:
-            # Real-world mode: standard Plotly chart with all controls
-            st.plotly_chart(fig, use_container_width=True, height=700, config={'displayModeBar': True, 'displaylogo': False, 'responsive': True, 'scrollZoom': True})
+        st.plotly_chart(ppi_fig, use_container_width=True, height=650, key="airspace_radar_ppi_main")
         
         # Update last_update_time only when the underlying track data changes.
         # This prevents frequent auto-refresh/re-runs from resetting the
@@ -1476,7 +1370,61 @@ with tab6:
                     except Exception:
                         pass
                     
-                    st.plotly_chart(fig_3d, use_container_width=True, key="battlespace_3d_chart", config={'displayModeBar': True, 'displaylogo': False, 'responsive': True, 'scrollZoom': True})
+                    # STEP 1 & 2: Hard empty detection and expose via session_state BEFORE plotting
+                    try:
+                        from abhedya.dashboard.battlespace_3d import is_battlespace_graph_empty, apply_default_battlespace_camera
+                        st.session_state["battlespace_is_empty"] = is_battlespace_graph_empty(fig_3d)
+                    except Exception:
+                        # Failsafe: assume empty so overlay will be rendered
+                        st.session_state["battlespace_is_empty"] = True
+
+                    # STEP 2 & 3: Single placeholder for plot + conditional native recovery UI
+                    try:
+                        from abhedya.dashboard.battlespace_3d import is_battlespace_graph_empty
+                        is_empty = bool(is_battlespace_graph_empty(fig_3d))
+                        st.session_state["battlespace_is_empty"] = is_empty
+                    except Exception:
+                        # Failsafe: assume empty so recovery UI displays
+                        st.session_state["battlespace_is_empty"] = True
+
+                    plot_area = st.empty()
+
+                    # STEP 4 & 5: Conditionally render recovery UI or the plot (native Streamlit UI only)
+                    if st.session_state.get("battlespace_is_empty", True):
+                        with plot_area.container():
+                            st.markdown("### Tactical View Unavailable")
+                            st.markdown("The airspace visualization lost focus due to scenario or sensor changes.")
+                            if st.button("Reacquire Tactical View", use_container_width=True):
+                                try:
+                                    fig_3d.update_layout(
+                                        scene_camera=dict(
+                                            eye=dict(x=1.5, y=1.5, z=1.2),
+                                            up=dict(x=0, y=0, z=1),
+                                            center=dict(x=0, y=0, z=0),
+                                        )
+                                    )
+                                    # Store back into session and re-run to re-render the chart
+                                    st.session_state["battlespace_fig"] = fig_3d
+                                except Exception:
+                                    pass
+                                try:
+                                    st.experimental_rerun()
+                                except Exception:
+                                    pass
+                    else:
+                        try:
+                            plot_area.plotly_chart(
+                                fig_3d,
+                                use_container_width=True,
+                                height=650,
+                                key="battlespace_3d_main",
+                            )
+                        except Exception:
+                            # Last-resort: try without height
+                            try:
+                                plot_area.plotly_chart(fig_3d, use_container_width=True, key="battlespace_3d_main")
+                            except Exception:
+                                pass
                     
                     # Sensor Legend Panel (below 3D visualization)
                     try:
