@@ -154,7 +154,6 @@ class Battlespace3D:
         # Initialize scene
         try:
             Battlespace3D._initialize_scene(fig, defender_position, view_range)
-            fig.layout.uirevision = "battlespace_ui_revision"
         except Exception:
             fig.add_trace(
                 go.Scatter3d(
@@ -168,6 +167,40 @@ class Battlespace3D:
 
         # Enforce single top-level hovermode for reliable hover selection
         fig.update_layout(hovermode="closest", scene=dict(hovermode="closest"))
+
+        # CRITICAL: Set uirevision to unique value per rebuild.
+        # Each scenario rebuild gets a new uirevision so Plotly re-renders instead of caching.
+        import hashlib
+        import time
+        unique_seed = hashlib.md5(f"{time.time()}:{view_range}:{len(tracks or [])}".encode()).hexdigest()[:8]
+        fig.layout.uirevision = f"battlespace_{unique_seed}"
+
+        # Create empty placeholder traces for threat density and halo (for in-place mutation later)
+        try:
+            fig.add_trace(
+                go.Scatter3d(
+                    x=[], y=[], z=[],
+                    mode='markers',
+                    marker=dict(size=40, color='orange', opacity=0.25),
+                    name='Threat Density (Advisory)',
+                    showlegend=True,
+                    hoverinfo='skip',
+                    meta={'type': 'threat_density'}
+                )
+            )
+            fig.add_trace(
+                go.Scatter3d(
+                    x=[], y=[], z=[],
+                    mode='lines',
+                    line=dict(color='rgba(255,200,100,0.5)', width=2),
+                    name='Density Halo (Advisory)',
+                    showlegend=True,
+                    hoverinfo='skip',
+                    meta={'type': 'density_halo'}
+                )
+            )
+        except Exception:
+            pass
 
         # Protected zones
         if show_protected_zones:
@@ -603,11 +636,6 @@ class Battlespace3D:
                         fig.layout.scene.aspectmode = 'cube'
                     except Exception:
                         pass
-                    # Do not set uirevision on first load so camera is deterministic
-                    fig.layout.uirevision = None
-                else:
-                    # Subsequent renders preserve user's camera
-                    fig.layout.uirevision = tracks_fingerprint
             except Exception:
                 pass
             # Do not forcibly reassign `scene.camera` here to avoid overwriting
@@ -1560,7 +1588,8 @@ class Battlespace3D:
                                 ),
                                 name=f"History {track_id}",
                                 showlegend=False,
-                                hoverinfo='skip'
+                                hoverinfo='skip',
+                                meta={'type': 'trajectory', 'layer': 'scenario', 'subtype': 'history'}
                             ))
                         # Additional audit-history trace (raw history, thin dashed, low opacity)
                         try:
@@ -1591,7 +1620,8 @@ class Battlespace3D:
                                     opacity=0.35,
                                     name=f"{track_id} History",
                                     showlegend=False,
-                                    hoverinfo='skip'
+                                    hoverinfo='skip',
+                                    meta={'type': 'trajectory', 'layer': 'scenario', 'subtype': 'raw_history'}
                                 ))
                         except Exception:
                             pass
@@ -1737,7 +1767,8 @@ class Battlespace3D:
                                 name=f'Trajectory_{track_id}',
                                 legendgroup='trajectories',
                                 showlegend=False,
-                                hoverinfo='skip'
+                                hoverinfo='skip',
+                                meta={'type': 'trajectory', 'layer': 'scenario', 'subtype': 'prediction'}
                             ))
                         except Exception:
                             pass
@@ -2054,7 +2085,7 @@ class Battlespace3D:
                     hoverinfo='text',
                     hoverlabel=dict(namelength=-1),
                     showlegend=show_track_legend,
-                    meta={'type': 'track'}
+                    meta={'type': 'track', 'layer': 'scenario', 'track_id': track_id}
                 ))
                 # Defer creation of an invisible buffer trace until after all visible markers
                 try:
@@ -2079,7 +2110,7 @@ class Battlespace3D:
                         marker=dict(size=6, color=badge_color, symbol='circle'),
                         showlegend=False,
                         hoverinfo='skip',
-                        meta={'type': 'track'}
+                        meta={'type': 'track', 'layer': 'scenario', 'subtype': 'badge'}
                     ))
                 except Exception:
                     pass
@@ -2100,7 +2131,7 @@ class Battlespace3D:
                             hoverinfo='text',
                             hoverlabel=dict(namelength=-1),
                             showlegend=False,
-                            meta={'type': 'track'}
+                            meta={'type': 'track', 'layer': 'scenario', 'subtype': 'buffer'}
                         ))
                     except Exception:
                         pass

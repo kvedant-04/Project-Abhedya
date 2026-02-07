@@ -104,6 +104,103 @@ def _safe_dashboard_call(method_name: str, *args, **kwargs):
             pass
     return None
 
+
+def apply_tactical_camera(fig):
+    """
+    Camera-only reset. Does NOT touch data, traces, or scenario state.
+    Safe to call even if the figure looks empty.
+    """
+    try:
+        fig.update_layout(
+            scene=dict(
+                camera=dict(
+                    eye=dict(x=1.25, y=1.25, z=0.9),
+                    up=dict(x=0, y=0, z=1),
+                    center=dict(x=0, y=0, z=0)
+                )
+            )
+        )
+    except Exception:
+        pass
+
+def ensure_scene_alive(fig: "go.Figure"):
+    """Rebinds Plotly 3D scene after trace mutation.
+
+    This is safe and does not touch data. It ensures internal Plotly
+    scene references are present so the 3D canvas does not go blank.
+    """
+    try:
+        if not hasattr(fig.layout, "scene") or fig.layout.scene is None:
+            fig.update_layout(scene={})
+
+        fig.update_layout(
+            scene=dict(
+                xaxis=dict(
+                    title="East (km)",
+                    showgrid=True,
+                    zeroline=False,
+                    backgroundcolor="rgba(0,0,0,0)"
+                ),
+                yaxis=dict(
+                    title="North (km)",
+                    showgrid=True,
+                    zeroline=False,
+                    backgroundcolor="rgba(0,0,0,0)"
+                ),
+                zaxis=dict(
+                    title="Altitude (meters)",
+                    showgrid=True,
+                    zeroline=False,
+                    backgroundcolor="rgba(0,0,0,0)"
+                ),
+                aspectmode="cube",
+            )
+        )
+    except Exception:
+        # Best-effort, do not raise from visualization helper
+        pass
+
+
+def is_figure_healthy(fig):
+    """Lightweight health check for the battlespace figure.
+
+    Returns False when figure is missing layout.scene or has no data.
+    """
+    try:
+        if fig is None:
+            return False
+        if not getattr(fig, 'data', None):
+            return False
+        if not hasattr(fig.layout, 'scene'):
+            return False
+        return True
+    except Exception:
+        return False
+
+def recover_plotly_scene(fig):
+    """
+    One-shot, idempotent scene recovery.
+    Must work even if scene is visually blank.
+    Does NOT recreate the figure or touch fig.data.
+    """
+    try:
+        fig.update_layout(
+            scene=dict(
+                camera=dict(
+                    eye=dict(x=1.25, y=1.25, z=1.25),
+                    center=dict(x=0, y=0, z=0),
+                    up=dict(x=0, y=0, z=1),
+                ),
+                xaxis=dict(visible=True),
+                yaxis=dict(visible=True),
+                zaxis=dict(visible=True),
+            ),
+            margin=dict(l=0, r=0, t=40, b=0),
+        )
+    except Exception:
+        # Best-effort; do not raise from visualization helper
+        pass
+
 # (moved earlier to ensure it's the first Streamlit call)
 
 # -------------------------------------------------------------------
@@ -146,6 +243,10 @@ if "auto_refresh" not in st.session_state:
 
 if "refresh_interval" not in st.session_state:
     st.session_state.refresh_interval = 5.0
+
+# uirevision counter used to allow safe scene rebuilds on scenario change
+if "uirevision_counter" not in st.session_state:
+    st.session_state["uirevision_counter"] = 0
 
 if "selected_scenario" not in st.session_state:
     st.session_state.selected_scenario = "civil_air_traffic"
@@ -1189,12 +1290,18 @@ with tab6:
                     st.caption("Threat Density (Advisory): Low = Blue, Medium = Yellow, High = Orange/Red.")
                     st.caption("Urgency Levels (TTC): LOW — >180 s | MEDIUM — 60–180 s | HIGH — <60 s")
                     
+                    # SCENARIO CHANGE: Destroy and rebuild (correct Plotly 3D lifecycle)
+                    current_scenario = str(st.session_state.get("selected_scenario", "civil_air_traffic") or "civil_air_traffic")
+                    previous_scenario = st.session_state.get("_last_rendered_scenario")
                     
-                    # Figure: create ONCE per scenario, reuse on slider/sensor change
-                    active_scenario = str(st.session_state.get("active_scenario") or current_scenario)
-                    need_new_figure = "battlespace_fig" not in st.session_state or active_scenario != current_scenario
+                    if previous_scenario != current_scenario:
+                        # Scenario changed: destroy old figure, force full rebuild
+                        st.session_state["battlespace_fig"] = None
+                        st.session_state["_last_rendered_scenario"] = current_scenario
+                        st.session_state["_scenario_just_changed"] = True
                     
-                    if need_new_figure:
+                    # Create figure once per scenario (destroy on scenario change)
+                    if "battlespace_fig" not in st.session_state or st.session_state["battlespace_fig"] is None:
                         try:
                             fig_3d = Battlespace3D.create_3d_visualization(
                                 tracks=data,
@@ -1212,105 +1319,71 @@ with tab6:
                                 sim_time=0.0
                             )
                             st.session_state["battlespace_fig"] = fig_3d
-                            st.session_state["active_scenario"] = current_scenario
+                            if "_last_rendered_scenario" not in st.session_state:
+                                st.session_state["_last_rendered_scenario"] = current_scenario
                         except Exception as e:
-                            if "battlespace_fig" in st.session_state and st.session_state["battlespace_fig"] is not None:
-                                fig_3d = st.session_state["battlespace_fig"]
-                            else:
-                                import plotly.graph_objects as go
-                                fig_3d = go.Figure()
-                                fig_3d.update_layout(template="plotly_dark", uirevision="BATTLESPACE_LOCKED", scene=dict(xaxis=dict(title="East (km)"), yaxis=dict(title="North (km)"), zaxis=dict(title="Altitude (meters)")))
-                                st.session_state["battlespace_fig"] = fig_3d
-                            st.warning(f"Battlespace visualization initialization warning: {str(e)}")
+                            st.error(f"Battlespace initialization failed: {str(e)}")
+                            st.stop()
                     else:
                         fig_3d = st.session_state["battlespace_fig"]
-                    # Ensure threat density persistent trace is created on initial figure creation
-                    if need_new_figure:
-                        try:
-                            found = False
-                            for tr in fig_3d.data:
-                                meta = getattr(tr, 'meta', None)
-                                if meta and meta.get('type') == 'threat_density':
-                                    found = True
-                                    break
-                                if getattr(tr, 'name', None) == 'Threat Density (Advisory)':
-                                    found = True
-                                    break
-                            if not found:
-                                import plotly.graph_objects as go
-                                density_trace = go.Scatter3d(
-                                    x=[], y=[], z=[],
-                                    mode='markers',
-                                    marker=dict(size=40, color='orange', opacity=0.25),
-                                    name='Threat Density (Advisory)',
-                                    showlegend=True,
-                                    hoverinfo='skip',
-                                    meta={'type': 'threat_density'}
-                                )
-                                fig_3d.add_trace(density_trace)
-                        except Exception:
-                            pass
-                    # Ensure figure preserves UI interactions across reruns
+                    
+                    # If scenario just changed, update uirevision to force Plotly re-render
                     try:
-                        fig_3d.update_layout(uirevision="BATTLESPACE_LOCK")
+                        if st.session_state.get("_scenario_just_changed"):
+                            import time
+                            fig_3d.layout.uirevision = f"battlespace_rebuild_{int(time.time() * 1000)}"
+                            st.session_state["_scenario_just_changed"] = False
                     except Exception:
                         pass
+                    
+                    # Camera preserved via unique uirevision on rebuild.
+                    # Figure rebuilt on scenario change (correct Plotly 3D lifecycle).
+                    # Time slider and sensor toggles use in-place mutations (no rebuild).
 
-                    # Apply sensor toggles strictly as visibility-only changes.
+                    # Sensor layer toggles: visibility-only, in-place mutations only.
                     try:
                         surveillance_on = sensor_layer_controls.get("show_surveillance", True) if isinstance(sensor_layer_controls, dict) else True
                         tracking_on = sensor_layer_controls.get("show_fire_control", True) if isinstance(sensor_layer_controls, dict) else True
                         esm_on = sensor_layer_controls.get("show_passive", True) if isinstance(sensor_layer_controls, dict) else True
 
                         for tr in fig_3d.data:
-                            try:
-                                meta = getattr(tr, 'meta', None)
-                                # HARD GUARD: Never touch track traces
-                                if meta and meta.get('type') == 'track':
-                                    continue
-
-                                # If meta indicates a sensor, toggle by sensor_type
-                                if meta and meta.get('is_sensor'):
-                                    stype = str(meta.get('sensor_type', '')).upper()
-                                    if 'LONG_RANGE' in stype or 'SURVEILLANCE' in stype:
-                                        tr.visible = surveillance_on
-                                    elif 'FIRE' in stype or 'TRACK' in stype:
-                                        tr.visible = tracking_on
-                                    elif 'PASSIVE' in stype or 'ESM' in stype:
-                                        tr.visible = esm_on
-                                    else:
-                                        # Leave unknown sensor-like traces alone
-                                        pass
-                                    continue
-
-                                # Fallback: minimal name-based sensor matching (do not touch tracks)
-                                name = getattr(tr, 'name', '') or ''
-                                if 'Surveillance' in name:
-                                    tr.visible = surveillance_on
-                                elif 'Passive' in name or 'ESM' in name:
-                                    tr.visible = esm_on
-                                elif 'Precision' in name or 'Fire' in name or 'Tracking' in name:
-                                    tr.visible = tracking_on
-                            except Exception:
+                            meta = getattr(tr, 'meta', None)
+                            # HARD GUARD: Never touch track traces
+                            if meta and meta.get('type') == 'track':
                                 continue
+                            # Visibility-only mutations for sensor and infrastructure traces
+                            if meta and meta.get('is_sensor'):
+                                stype = str(meta.get('sensor_type', '')).upper()
+                                if 'LONG_RANGE' in stype or 'SURVEILLANCE' in stype:
+                                    tr.visible = surveillance_on
+                                elif 'FIRE' in stype or 'TRACK' in stype:
+                                    tr.visible = tracking_on
+                                elif 'PASSIVE' in stype or 'ESM' in stype:
+                                    tr.visible = esm_on
+                            elif meta and meta.get('type') in ('sensor_volume', 'density', 'sensor_hint'):
+                                # Infrastructure visibility follows sensor toggles
+                                if meta.get('type') == 'density':
+                                    tr.visible = show_threat_density
+                                elif 'sensor_type' in meta:
+                                    stype = str(meta.get('sensor_type', '')).upper()
+                                    if 'SURVEILLANCE' in stype:
+                                        tr.visible = surveillance_on
+                                    elif 'TRACK' in stype or 'FIRE' in stype:
+                                        tr.visible = tracking_on
+                                    elif 'ESM' in stype or 'PASSIVE' in stype:
+                                        tr.visible = esm_on
                     except Exception:
                         pass
 
-                    # FINAL SAFETY ASSERT (non-breaking)
+                    # Verify tracks still exist (sanity check only)
                     try:
-                        ok = any((getattr(t, 'meta', None) and t.meta.get('type') == 'track') for t in fig_3d.data)
-                        if not ok:
-                            try:
-                                st.warning('Track traces missing — this must never happen')
-                            except Exception:
-                                pass
+                        has_tracks = any((getattr(t, 'meta', None) and t.meta.get('type') == 'track') for t in fig_3d.data)
                     except Exception:
-                        pass
+                        has_tracks = False
                     
-                    # Update marker positions only (no figure rebuild)
+                    # Update track positions in-place (no figure rebuild, no trace addition/removal).
                     try:
                         from abhedya.dashboard.battlespace_3d import update_track_positions
-                        # Determine effective time: use live simulation time only
                         effective_time = float(st.session_state.get("sim_time", 0.0))
                         update_track_positions(fig_3d, data, float(effective_time))
                     except Exception:
@@ -1370,61 +1443,99 @@ with tab6:
                     except Exception:
                         pass
                     
-                    # STEP 1 & 2: Hard empty detection and expose via session_state BEFORE plotting
-                    try:
-                        from abhedya.dashboard.battlespace_3d import is_battlespace_graph_empty, apply_default_battlespace_camera
-                        st.session_state["battlespace_is_empty"] = is_battlespace_graph_empty(fig_3d)
-                    except Exception:
-                        # Failsafe: assume empty so overlay will be rendered
-                        st.session_state["battlespace_is_empty"] = True
+                    # Inject Plotly-native updatemenus overlay for in-figure recovery
+                    healthy = is_figure_healthy(fig_3d)
 
-                    # STEP 2 & 3: Single placeholder for plot + conditional native recovery UI
-                    try:
-                        from abhedya.dashboard.battlespace_3d import is_battlespace_graph_empty
-                        is_empty = bool(is_battlespace_graph_empty(fig_3d))
-                        st.session_state["battlespace_is_empty"] = is_empty
-                    except Exception:
-                        # Failsafe: assume empty so recovery UI displays
-                        st.session_state["battlespace_is_empty"] = True
+                    # Professional button styling (health-aware opacity fade)
+                    btn_opacity = 0.35 if healthy else 0.95
+                    tooltip_opacity = 0.0 if healthy else 0.85
 
-                    plot_area = st.empty()
-
-                    # STEP 4 & 5: Conditionally render recovery UI or the plot (native Streamlit UI only)
-                    if st.session_state.get("battlespace_is_empty", True):
-                        with plot_area.container():
-                            st.markdown("### Tactical View Unavailable")
-                            st.markdown("The airspace visualization lost focus due to scenario or sensor changes.")
-                            if st.button("Reacquire Tactical View", use_container_width=True):
-                                try:
-                                    fig_3d.update_layout(
-                                        scene_camera=dict(
-                                            eye=dict(x=1.5, y=1.5, z=1.2),
-                                            up=dict(x=0, y=0, z=1),
-                                            center=dict(x=0, y=0, z=0),
-                                        )
+                    fig_3d.update_layout(
+                        updatemenus=[
+                            dict(
+                                type="buttons",
+                                direction="left",
+                                x=0.5,
+                                y=0.003,
+                                xanchor="center",
+                                yanchor="bottom",
+                                showactive=False,
+                                visible=True,
+                                bgcolor=f"rgba(37,99,235,{btn_opacity})",
+                                bordercolor="#1E40AF",
+                                borderwidth=1,
+                                font=dict(color="white", size=12, family="Inter, Segoe UI, sans-serif"),
+                                pad=dict(l=10, r=10, t=6, b=6),
+                                buttons=[
+                                    dict(
+                                        label="Reacquire Tactical View",
+                                        method="relayout",
+                                        args=[
+                                            {
+                                                "scene.camera.eye.x": 1.25,
+                                                "scene.camera.eye.y": 1.25,
+                                                "scene.camera.eye.z": 1.25,
+                                                "scene.camera.center.x": 0,
+                                                "scene.camera.center.y": 0,
+                                                "scene.camera.center.z": 0,
+                                                "scene.xaxis.visible": True,
+                                                "scene.yaxis.visible": True,
+                                                "scene.zaxis.visible": True,
+                                            }
+                                        ],
                                     )
-                                    # Store back into session and re-run to re-render the chart
-                                    st.session_state["battlespace_fig"] = fig_3d
-                                except Exception:
-                                    pass
-                                try:
-                                    st.experimental_rerun()
-                                except Exception:
-                                    pass
-                    else:
-                        try:
-                            plot_area.plotly_chart(
-                                fig_3d,
-                                use_container_width=True,
-                                height=650,
-                                key="battlespace_3d_main",
+                                ],
                             )
-                        except Exception:
-                            # Last-resort: try without height
-                            try:
-                                plot_area.plotly_chart(fig_3d, use_container_width=True, key="battlespace_3d_main")
-                            except Exception:
-                                pass
+                        ],
+                        annotations=[
+                            dict(
+                                x=0.5,
+                                y=0.11,
+                                xref="paper",
+                                yref="paper",
+                                text=("ⓘ Reacquire Tactical View resets camera & redraws the battlespace if the view becomes occluded."),
+                                showarrow=False,
+                                font=dict(size=11, color="#C7D2FE", family="Inter, Segoe UI, sans-serif"),
+                                align="center",
+                                bgcolor="rgba(15,23,42,0.85)",
+                                bordercolor="#334155",
+                                borderwidth=1,
+                                borderpad=6,
+                                xanchor="center",
+                                yanchor="bottom",
+                                opacity=tooltip_opacity,
+                            )
+                        ]
+                    )
+
+                    # Add invisible hover trace for tooltip support
+                    import plotly.graph_objects as go
+                    fig_3d.add_trace(
+                        go.Scatter3d(
+                            x=[0],
+                            y=[0],
+                            z=[0],
+                            mode="markers",
+                            marker=dict(size=1, opacity=0),
+                            hoverinfo="text",
+                            text=(
+                                "ⓘ Reacquire Tactical View & redraws the battlespace if the view becomes occluded."
+                            ),
+                            showlegend=False,
+                        )
+                    )
+
+                    with st.container():
+                        st.plotly_chart(
+                            fig_3d,
+                            use_container_width=True,
+                            config={
+                                "displayModeBar": True,
+                                "displaylogo": False,
+                                "responsive": True,
+                                "scrollZoom": True,
+                            },
+                        )
                     
                     # Sensor Legend Panel (below 3D visualization)
                     try:
