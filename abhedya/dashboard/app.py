@@ -349,13 +349,11 @@ else:
 # -------------------------------------------------------------------
 nav_col1, nav_col2, nav_col3 = st.columns([1, 1, 8])
 with nav_col1:
-    if st.button("🏠 Home", key="nav_home", help="Return to Airspace Overview"):
-        st.session_state.current_tab = "Airspace Overview"
-        st.rerun()
+    # Home button removed (UI-only). Column retained to preserve layout alignment.
+    pass
 with nav_col2:
-    if st.button("← Back", key="nav_back", help="Return to previous view"):
-        # Simple back navigation - could be enhanced with history stack
-        st.rerun()
+    # Back button removed (UI-only). Column retained to preserve layout alignment.
+    pass
 
 # -------------------------------------------------------------------
 # Header

@@ -82,25 +82,10 @@ class DashboardLayout:
     @staticmethod
     def render_persistent_banner():
         """Render persistent advisory banner on all pages."""
-        st.markdown(
-            """
-            <div style="
-                background-color:#F0F0F0;
-                border-left:4px solid #4A90E2;
-                padding:8px;
-                margin-bottom:10px;
-                border-radius:4px;
-            ">
-                <h3 style="margin:0;color:#2c5282;">
-                    🛡️ Decision Support System — Advisory Only — No Autonomous Actions
-                </h3>
-                <p style="margin:6px 0 0 0;color:#555;">
-                    All outputs are advisory only. Human operator review and approval required.
-                </p>
-            </div>
-            """,
-            unsafe_allow_html=True
-        )
+        # Persistent advisory banner intentionally disabled.
+        # Removal performed as a UI-only change to eliminate the global advisory
+        # banner while preserving layout flow and column alignment.
+        return
 
     @staticmethod
     def render_mode_awareness_banner():
